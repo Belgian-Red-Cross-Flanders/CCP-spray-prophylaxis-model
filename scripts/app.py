@@ -6,6 +6,7 @@ import matplotlib.dates as mdates
 
 from model_hospitalization import run_model
 
+# HOW TO RUN: & "C:\Users\MCASTRO\AppData\Local\Python\pythoncore-3.14-64\python.exe" -m streamlit run scripts/app.py   
 # --------------------------
 # 1. LOAD + ALIGN DATA
 # --------------------------
@@ -270,7 +271,7 @@ report = pd.DataFrame({
         f"{results['maximum_stock']/doses_per_treatment:,.0f}",
         f"{100*results['average_coverage']:.1f}%",
         f"{100*results['peak_coverage']:.1f}%",
-        results["stockout_days"],
+        f"{results["stockout_days"]}",
         f"{100*results['fraction_supply_limited']:.1f}%",
         f"{results['peak_daily_demand']:.0f} patients/day",
         f"{results['peak_treatment_starts']:.0f} patients/day",
