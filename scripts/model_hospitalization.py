@@ -140,7 +140,6 @@ def run_model(
     donation_volume,
     donations_per_donor,
     dose_volume,
-    high_risk_fraction,
     delay_inf_to_hosp,
     t_start,
     T_rollout,
@@ -204,15 +203,14 @@ def run_model(
         # convert to doses (full donor yield)
         daily_doses[i] = actual_donors * doses_per_donor
 
-    if debug:
-        plt.figure(figsize=(12,5))
-        plt.plot(dates, daily_doses/doses_per_donor, label="Donors per day")
-        plt.plot(dates, daily_doses/doses_per_treatment, label="Treatments produced per day")
-        plt.suptitle("Donors and treatments produced per day")
-        plt.title(f"Donor rate:{round(donor_rate,2)}; Treatments/donor:{round(treatments_per_donor,2)}; Doses/treatment:{doses_per_treatment}.")
-        plt.legend()
-        plt.grid()
-        plt.show()
+    # estimate high-risk infections from observed hospitalizations
+    high_risk_population = np.roll(
+        H,
+        -delay_inf_to_hosp
+    ).astype(float)
+
+    # last days have no future hospitalization data
+    high_risk_population[-delay_inf_to_hosp:] = 0
 
     stock = np.zeros_like(H, dtype=float)
 
@@ -266,13 +264,8 @@ def run_model(
             for batch in inventory
         )
 
-        # calculate eligible patients (fraction of infections)
         # adoption determines the fraction of these eligible patients that seek treatment
-        # eligible population
-        eligible_today = (
-            high_risk_fraction
-            * I_smooth[i]
-        )
+        eligible_today = high_risk_population[i]
 
         # demand driven only by adoption
         requested_patients = (
@@ -366,8 +359,8 @@ def run_model(
             # if nobody requests treatment, demand is fully satisfied by definition
             C_supply[i] = 1.0
 
-        # identify limiting factor
-        if max_new_patients < requested_patients:
+        # identify limiting factor 
+        if max_new_patients < requested_patients: # more requests than availability
 
             supply_limited[i] = 1
 
@@ -379,76 +372,76 @@ def run_model(
         # daily delivered today corrspond to the treatment courses started today
         reserved_doses_series[i] = doses_needed
  
-    if debug:
+    # if debug:
 
-        fig, axs = plt.subplots(
-            2,
-            2,
-            figsize=(12, 8)
-        )
-        # ----------------------------------
-        # Production and inventory
-        # ----------------------------------
-        axs[0,0].plot(
-            daily_doses,
-            label="Production (doses/day)"
-        )
-        axs[0,0].plot(
-            stock,
-            label="Inventory stock"
-        )
-        axs[0,0].set_title(
-            "Production and Inventory"
-        )
-        axs[0,0].legend()
-        axs[0,0].grid()
-        # ----------------------------------
-        # Treatment demand
-        # ----------------------------------
-        axs[0,1].plot(
-            demand_today_series,
-            label="Demand"
-        )
-        axs[0,1].plot(
-            new_patients_series,
-            label="Treatment starts"
-        )
-        axs[0,1].set_title(
-            "Demand vs Treatment Starts"
-        )
-        axs[0,1].legend()
-        axs[0,1].grid()
-        # ----------------------------------
-        # Coverage
-        # ----------------------------------
-        axs[1,0].plot(
-            C,
-            label="Coverage"
-        )
-        axs[1,0].plot(
-            Adoption,
-            label="Adoption"
-        )
-        axs[1,0].set_ylim(0,1.05)
-        axs[1,0].set_title(
-            "Coverage"
-        )
-        axs[1,0].legend()
-        axs[1,0].grid()
-        # ----------------------------------
-        # Plasma wastage
-        # ----------------------------------
-        axs[1,1].plot(
-            discarded_doses,
-            label="Discarded doses"
-        )
-        axs[1,1].set_title(
-            "Expired Inventory"
-        )
-        axs[1,1].legend()
-        axs[1,1].grid()
-        plt.tight_layout()
-        plt.show()
+    #     fig, axs = plt.subplots(
+    #         2,
+    #         2,
+    #         figsize=(12, 8)
+    #     )
+    #     # ----------------------------------
+    #     # Production and inventory
+    #     # ----------------------------------
+    #     axs[0,0].plot(
+    #         daily_doses,
+    #         label="Production (doses/day)"
+    #     )
+    #     axs[0,0].plot(
+    #         stock,
+    #         label="Inventory stock"
+    #     )
+    #     axs[0,0].set_title(
+    #         "Production and Inventory"
+    #     )
+    #     axs[0,0].legend()
+    #     axs[0,0].grid()
+    #     # ----------------------------------
+    #     # Treatment demand
+    #     # ----------------------------------
+    #     axs[0,1].plot(
+    #         demand_today_series,
+    #         label="Demand"
+    #     )
+    #     axs[0,1].plot(
+    #         new_patients_series,
+    #         label="Treatment starts"
+    #     )
+    #     axs[0,1].set_title(
+    #         "Demand vs Treatment Starts"
+    #     )
+    #     axs[0,1].legend()
+    #     axs[0,1].grid()
+    #     # ----------------------------------
+    #     # Coverage
+    #     # ----------------------------------
+    #     axs[1,0].plot(
+    #         C,
+    #         label="Coverage"
+    #     )
+    #     axs[1,0].plot(
+    #         Adoption,
+    #         label="Adoption"
+    #     )
+    #     axs[1,0].set_ylim(0,1.05)
+    #     axs[1,0].set_title(
+    #         "Coverage"
+    #     )
+    #     axs[1,0].legend()
+    #     axs[1,0].grid()
+    #     # ----------------------------------
+    #     # Plasma wastage
+    #     # ----------------------------------
+    #     axs[1,1].plot(
+    #         discarded_doses,
+    #         label="Discarded doses"
+    #     )
+    #     axs[1,1].set_title(
+    #         "Expired Inventory"
+    #     )
+    #     axs[1,1].legend()
+    #     axs[1,1].grid()
+    #     plt.tight_layout()
+    #     plt.show()
 
     # Shift coverage forward
     C_effective = np.roll(C, delay_inf_to_hosp)
@@ -694,4 +687,3 @@ def plot_results(results):
 
 # print_report(results)
 # plot_results(results)
-
