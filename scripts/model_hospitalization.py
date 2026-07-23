@@ -656,10 +656,19 @@ def run_model(
     general_patients_series = np.zeros_like(H, dtype=float)
     high_risk_stock_series = np.zeros_like(H)
     general_stock_series = np.zeros_like(H)
-    wuhan_stock_series = np.zeros_like(H, dtype=float)
-    alpha_stock_series = np.zeros_like(H, dtype=float)
-    delta_stock_series = np.zeros_like(H, dtype=float)
-    omicron_stock_series = np.zeros_like(H, dtype=float)
+
+    wuhan_high_risk_series = np.zeros_like(H, dtype=float)
+    wuhan_general_series = np.zeros_like(H, dtype=float)
+
+    alpha_high_risk_series = np.zeros_like(H, dtype=float)
+    alpha_general_series = np.zeros_like(H, dtype=float)
+
+    delta_high_risk_series = np.zeros_like(H, dtype=float)
+    delta_general_series = np.zeros_like(H, dtype=float)
+
+    omicron_high_risk_series = np.zeros_like(H, dtype=float)
+    omicron_general_series = np.zeros_like(H, dtype=float)
+
 
     C = np.zeros_like(H, dtype=float)
     C_supply = np.zeros_like(H, dtype=float)
@@ -731,29 +740,66 @@ def run_model(
 
         inventory = remove_empty_batches(inventory)
 
-        wuhan_stock = 0
-        alpha_stock = 0
-        delta_stock = 0
-        omicron_stock = 0
-
+        wuhan_high_risk = 0
+        wuhan_general = 0
+        alpha_high_risk = 0
+        alpha_general = 0
+        delta_high_risk = 0
+        delta_general = 0
+        omicron_high_risk = 0
+        omicron_general = 0
         for batch in inventory:
 
-            if batch["variant"] == "Wuhan":
-                wuhan_stock += batch["doses"]
+            future_activity = project_activity(
+                batch["activity"],
+                daily_activity_decay,
+                treatment_duration,
+                decay_mode
+            )
 
-            elif batch["variant"] == "Alpha":
-                alpha_stock += batch["doses"]
+            is_high_risk = (
+                future_activity >= high_risk_use_threshold
+            )
 
-            elif batch["variant"] == "Delta":
-                delta_stock += batch["doses"]
+            variant = batch["variant"]
+            doses = batch["doses"]
 
-            elif batch["variant"] == "Omicron":
-                omicron_stock += batch["doses"]
+            if variant == "Wuhan":
 
-        wuhan_stock_series[i] = wuhan_stock
-        alpha_stock_series[i] = alpha_stock
-        delta_stock_series[i] = delta_stock
-        omicron_stock_series[i] = omicron_stock
+                if is_high_risk:
+                    wuhan_high_risk += doses
+                else:
+                    wuhan_general += doses
+
+            elif variant == "Alpha":
+
+                if is_high_risk:
+                    alpha_high_risk += doses
+                else:
+                    alpha_general += doses
+
+            elif variant == "Delta":
+
+                if is_high_risk:
+                    delta_high_risk += doses
+                else:
+                    delta_general += doses
+
+            elif variant == "Omicron":
+
+                if is_high_risk:
+                    omicron_high_risk += doses
+                else:
+                    omicron_general += doses
+
+        wuhan_high_risk_series[i] = wuhan_high_risk
+        wuhan_general_series[i] = wuhan_general
+        alpha_high_risk_series[i] = alpha_high_risk
+        alpha_general_series[i] = alpha_general
+        delta_high_risk_series[i] = delta_high_risk
+        delta_general_series[i] = delta_general
+        omicron_high_risk_series[i] = omicron_high_risk
+        omicron_general_series[i] = omicron_general
 
         # patients remain active for the entire treatment duration 
         # even though inventory was already reserved at treatment initiation
@@ -860,10 +906,15 @@ def run_model(
         "discarded_doses": discarded_doses,
         "high_risk_stock": high_risk_stock_series,
         "general_stock": general_stock_series,
-        "wuhan_stock": wuhan_stock_series,
-        "alpha_stock": alpha_stock_series,
-        "delta_stock": delta_stock_series,
-        "omicron_stock": omicron_stock_series,
+        "wuhan_high_risk": wuhan_high_risk_series,
+        "wuhan_general": wuhan_general_series,
+        "alpha_high_risk": alpha_high_risk_series,
+        "alpha_general": alpha_general_series,
+        "delta_high_risk": delta_high_risk_series,
+        "delta_general": delta_general_series,
+        "omicron_high_risk": omicron_high_risk_series,
+        "omicron_general": omicron_general_series,
+
 
         # Activity
         "end_treatment_efficacy": treatment_efficacy_series,
@@ -901,6 +952,14 @@ def summarize_results(results):
             results["stock"]
         ),
 
+        "maximum_high_risk_stock": np.max(
+            results["high_risk_stock"]
+        ),
+
+        "maximum_general_stock": np.max(
+            results["general_stock"]
+        ),
+
         "stockout_days": np.sum(
             results["stock"] <= 0
         ),
@@ -915,6 +974,10 @@ def summarize_results(results):
 
         "peak_treatment_starts": np.max(
             results["high_risk_patients"]
+        ),
+
+        "peak_general_users": np.max(
+            results["general_patients"]
         ),
 
         "peak_daily_production": np.max(

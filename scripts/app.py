@@ -925,10 +925,10 @@ with tab_model:
     fig, ax = plt.subplots(figsize=(8, 4))
     ax.stackplot(
         dates,
-        results["wuhan_stock"],
-        results["alpha_stock"],
-        results["delta_stock"],
-        results["omicron_stock"],
+        results["wuhan_high_risk"] + results["wuhan_general"],
+        results["alpha_high_risk"] + results["alpha_general"],
+        results["delta_high_risk"] + results["delta_general"],
+        results["omicron_high_risk"] + results["omicron_general"],
         labels=[
             "Wuhan",
             "Alpha",
@@ -939,7 +939,65 @@ with tab_model:
     ax.set_title(
         "Inventory composition by variant"
     )
+    ax.set_ylabel("Doses")
     ax.legend()
+    ax.grid()
+    format_axes(ax)
+    st.pyplot(fig, width="stretch")
+
+    # Stock by variant and eligibility
+    fig, ax = plt.subplots(figsize=(8, 4))
+
+    ax.stackplot(
+        dates,
+
+        results["wuhan_high_risk"],
+        results["wuhan_general"],
+
+        results["alpha_high_risk"],
+        results["alpha_general"],
+
+        results["delta_high_risk"],
+        results["delta_general"],
+
+        results["omicron_high_risk"],
+        results["omicron_general"],
+
+        colors=[
+            "#08306b",  # dark blue
+            "#6baed6",  # light blue
+
+            "#ad2121", 
+            "#fd6b6b",  
+
+            "#00441b",  
+            "#74c476",  
+
+            "#80761A",  
+            "#f8fb4a"   
+        ],
+
+        labels=[
+            "Wuhan high-risk",
+            "Wuhan general",
+
+            "Alpha high-risk",
+            "Alpha general",
+
+            "Delta high-risk",
+            "Delta general",
+
+            "Omicron high-risk",
+            "Omicron general"
+        ]
+    )
+
+    ax.set_title(
+        "Inventory composition by variant and eligibility"
+    )
+
+    ax.set_ylabel("Doses")
+    ax.legend(ncol=2, fontsize=6)
     ax.grid()
     format_axes(ax)
     st.pyplot(fig, width="stretch")
@@ -1011,12 +1069,15 @@ with tab_model:
             "Total treatment courses discarded",
             "Average inventory",
             "Peak inventory",
+            "Peak high-risk inventory",
+            "Peak general inventory",
             "Average high-risk coverage",
             "Peak high-risk coverage",
             "Stockout days",
             "% days supply limited",
             "Peak high-risk demand",
             "Peak high-risk treatment starts",
+            "Peak general users",
             "Peak daily production",
             "Maximum daily hospitalization reduction"
         ],
@@ -1030,6 +1091,8 @@ with tab_model:
             f"{summary['average_stock'] / doses_per_treatment:,.0f} treatment courses",
 
             f"{summary['maximum_stock'] / doses_per_treatment:,.0f} treatment courses",
+            f"{summary['maximum_high_risk_stock'] / doses_per_treatment:,.0f} treatment courses",
+            f"{summary['maximum_general_stock'] / doses_per_treatment:,.0f} treatment courses",
 
             f"{100 * summary['average_coverage']:.1f}%",
 
@@ -1042,6 +1105,7 @@ with tab_model:
             f"{summary['peak_high_risk_demand']:.0f} patients/day",
 
             f"{summary['peak_treatment_starts']:.0f} patients/day",
+            f"{summary['peak_general_users']:.0f} patients/day",
 
             f"{summary['peak_daily_production'] / doses_per_treatment:.0f} treatments/day",
 
