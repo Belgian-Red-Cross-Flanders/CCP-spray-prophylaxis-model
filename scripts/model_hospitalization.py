@@ -222,15 +222,17 @@ def update_inventory(
     daily_activity_decay,
     initial_ccp_activity,
     minimum_usable_activity,
-    variant_changes
+    variant_changes,
+    decay_mode
 ):
 
     # age the inventory (all plasma batch ages 1 day) and make it lose efficacy
     for batch in inventory:
         batch["age"] += 1
-        batch["activity"] *= (
-            1.0 - daily_activity_decay
-        )
+        batch["activity"] = project_activity(current_activity=batch["activity"], 
+                                              daily_activity_decay=daily_activity_decay, 
+                                              days=1, 
+                                              decay_mode=decay_mode)
     
     # on the day of the variant change, the inventory gets more penalized
     current_variant = "Wuhan" #first variant
@@ -336,7 +338,7 @@ def allocate_high_risk_patients(
         available_stock,
         decay_mode = "exponential" # or "linear"
 ):
-    # How many patients could start based on usable stock  (only doses that remain above activity threshold at treatment completion)
+    # How many patients could start based on usable stock (only doses that remain above activity threshold at treatment completion)
     max_new_patients = (
         available_stock
         / doses_per_treatment
@@ -612,9 +614,7 @@ def run_model(
     treatments_per_donor = doses_per_donor/doses_per_treatment
     donor_rate = potential_donor_rate * over_titre_donor_rate
 
-    # --------------------------
-    # 3. BUILD TIME INDEX
-    # --------------------------
+
     n_days = len(H)
 
     adoption = calculate_adoption(
@@ -677,7 +677,8 @@ def run_model(
             daily_activity_decay,
             initial_ccp_activity,
             minimum_usable_activity,
-            variant_changes
+            variant_changes,
+            decay_mode
         )
 
         discarded_doses[i] = expired_today
