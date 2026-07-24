@@ -153,41 +153,59 @@ def calculate_daily_doses(
     n_days,
     donor_rate,
     capacity_per_day,
-    doses_per_donor,
+    doses_per_donation,
+    donations_per_donor,
+    donation_interval,
     window_start,
     window_end
 ):
-    # --------------------------
-    # SUPPLY → STOCK (daily production)
-    # people who were infected in the past may become donors after recovery
-    # donation capacity is limited
-    # --------------------------
 
-    daily_doses = np.zeros(n_days, dtype=float)
-    
-    window_length = window_end - window_start + 1
-    
-    # smoothed infection curve - infections generate potential donors 
-    # but daily reports are noisy bc of reporting delays, weekends, short-term fluctuations
-    I_smooth = pd.Series(I).rolling(14).mean().bfill().values
-    for i in range(n_days):
+    daily_donations = np.zeros(
+        n_days,
+        dtype=float
+    )
 
-        # distribute the potential donors through the window 
-        potential_donors = 0
-        for k in range(window_start, window_end+1):
-            if i - k >= 0:
-                potential_donors += (
-                    donor_rate
-                    * I_smooth[i - k]
-                    / window_length
-                )
-                # /window_length means every recovered donor is equaly likely to donate on any daty between window_start and window_end
+    # Generate donation events
+    for infection_day in range(n_days):
 
-        # capacity constraint acts on DONORS (how many donors we can collect from in a day)
-        actual_donors = min(potential_donors, capacity_per_day)
+        donors = (
+            donor_rate
+            * I[infection_day]
+        )
 
-        # convert to doses (full donor yield). These are the CCP doses produced in day i
-        daily_doses[i] = actual_donors * doses_per_donor
+        # every [donation_interval] day, a donor can make a new donation, if these days are in the donation window
+        for donation_number in range(
+            donations_per_donor
+        ):
+
+            donation_day = (
+                infection_day
+                + window_start
+                + donation_number * donation_interval
+            )
+
+            if (
+                donation_day < n_days
+                and
+                donation_day
+                <= infection_day + window_end
+            ):
+
+                daily_donations[
+                    donation_day
+                ] += donors
+
+    # Collection capacity
+    actual_donations = np.minimum(
+        daily_donations,
+        capacity_per_day
+    )
+
+    daily_doses = (
+        actual_donations
+        * doses_per_donation
+    )
+
     return daily_doses
 
 
@@ -296,224 +314,138 @@ def project_activity(
         raise ValueError(
             f"Unknown decay mode: {decay_mode}"
         )
-    
-def calculate_available_stock(
+
+def classify_inventory(
     inventory,
     treatment_duration,
     daily_activity_decay,
-    minimum_usable_activity,
     high_risk_use_threshold,
-    decay_mode = "exponential" # or "linear"
+    minimum_usable_activity,
+    decay_mode
 ):
-    high_risk_stock = 0 #doses suitable for high-risk patients
-    general_stock = 0 #doses for the general population
 
     for batch in inventory:
-        # project activity to the day of treatment completion
-        future_activity = project_activity(
-            batch["activity"],
-            daily_activity_decay,
-            treatment_duration,
-            decay_mode
+
+        batch["future_activity"] = (
+            project_activity(
+                batch["activity"],
+                daily_activity_decay,
+                treatment_duration,
+                decay_mode
+            )
         )
-        # stock high quality plasma
-        if future_activity >= high_risk_use_threshold:
-            high_risk_stock += batch["doses"]
-        # stock moderate quality plasma
-        elif future_activity >= minimum_usable_activity:
-            general_stock += batch["doses"]
+
+        if (
+            batch["future_activity"]
+            >= high_risk_use_threshold
+        ):
+            batch["stock_class"] = "high_risk"
+
+        elif (
+            batch["future_activity"]
+            >= minimum_usable_activity
+        ):
+            batch["stock_class"] = "general"
+
+        else:
+            batch["stock_class"] = "expired"
+
+    return inventory
+    
+def summarize_inventory(
+    inventory
+):
+
+    high_risk_stock = sum(
+        batch["doses"]
+        for batch in inventory
+        if batch["stock_class"] == "high_risk"
+    )
+
+    general_stock = sum(
+        batch["doses"]
+        for batch in inventory
+        if batch["stock_class"] == "general"
+    )
 
     return (
         high_risk_stock,
         general_stock
-        )
+    )
 
-def allocate_high_risk_patients(
-        inventory,
-        requested_patients,
-        doses_per_treatment,
-        treatment_duration,
-        daily_activity_decay, 
-        high_risk_use_threshold,
-        available_stock,
-        decay_mode = "exponential" # or "linear"
+def allocate_patients(
+    inventory,
+    requested_patients,
+    doses_per_treatment,
+    available_stock,
+    stock_class
 ):
-    # How many patients could start based on usable stock (only doses that remain above activity threshold at treatment completion)
+
     max_new_patients = (
         available_stock
         / doses_per_treatment
     )
-    # clinical demand, capped at maximum based on stock
+
     requested_starts = min(
         requested_patients,
         max_new_patients
     )
-    # total number of doses that would be required to start all treatment courses requested today
+
     doses_needed = (
         requested_starts
         * doses_per_treatment
     )
 
-    # Reserve stock (FIFO)
     remaining = doses_needed
-    # "effective_treatments" accumulates the activity-
-    # weighted dose volume and is later used to compute
-    # mean treatment activity.
     effective_treatments = 0
+
     for batch in inventory:
 
-        if remaining <= 0: # Stop if all required doses have been allocated.
+        if remaining <= 0:
             break
 
-        # Activity expected at treatment completion
-        future_activity = project_activity(
-            current_activity=batch["activity"],
-            daily_activity_decay=daily_activity_decay,
-            days=treatment_duration,
-            decay_mode=decay_mode
-        )
-
-        # Ignore stock that won't be used for high risk patients
-        if future_activity < high_risk_use_threshold:
+        if batch["stock_class"] != stock_class:
             continue
 
-        # reserve as many doses as possible from this batch (FIFO inventory usage)
         take = min(
             batch["doses"],
             remaining
         )
 
-        # accumulate activity-weighted doses: for ex. 100 doses at 50% activity contribute 50 activity-adjusted doses
         effective_treatments += (
             take
-            * future_activity
+            * batch["future_activity"]
         )
 
-        # remove reserved doses from inventory and from dose requirement
         batch["doses"] -= take
         remaining -= take
 
-    # Actual treatments started
     actual_doses_reserved = (
         doses_needed - remaining
     )
 
-    # convert reserved doses back into complete treatment courses (patients treated)
     new_patients = (
         actual_doses_reserved
         / doses_per_treatment
     )
 
-    # mean treatment activity among all doses deployed today. The average activity that patients will experience at treatment completion.
     if actual_doses_reserved > 0:
+
         mean_treatment_activity = (
             effective_treatments
             / actual_doses_reserved
         )
+
     else:
+
         mean_treatment_activity = 0
 
     return (
         inventory,
         new_patients,
+        max_new_patients,
         actual_doses_reserved,
-        mean_treatment_activity,
-        max_new_patients
-    )
-
-def allocate_general_patients(
-        inventory,
-        requested_patients,
-        doses_per_treatment,
-        treatment_duration,
-        daily_activity_decay, 
-        high_risk_use_threshold,
-        minimum_usable_activity,
-        available_stock,
-        decay_mode = "exponential" # or "linear"
-):
-    # How many patients could start based on usable stock  (only doses that remain above activity threshold at treatment completion)
-    max_new_patients = (
-        available_stock
-        / doses_per_treatment
-    )
-    # clinical demand, capped at maximum based on stock
-    requested_starts = min(
-        requested_patients,
-        max_new_patients
-    )
-    # total number of doses that would be required to start all treatment courses requested today
-    doses_needed = (
-        requested_starts
-        * doses_per_treatment
-    )
-
-    # Reserve stock (FIFO)
-    remaining = doses_needed
-    # "effective_treatments" accumulates the activity-
-    # weighted dose volume and is later used to compute
-    # mean treatment activity.
-    effective_treatments = 0
-    for batch in inventory:
-
-        if remaining <= 0: # Stop if all required doses have been allocated.
-            break
-
-        # Activity expected at treatment completion
-        future_activity = project_activity(
-            current_activity=batch["activity"],
-            daily_activity_decay=daily_activity_decay,
-            days=treatment_duration,
-            decay_mode=decay_mode
-        )
-
-        # Ignore stock that won't be used for general patients
-        if (future_activity < minimum_usable_activity) or (future_activity >= high_risk_use_threshold):
-            continue
-
-        # reserve as many doses as possible from this batch (FIFO inventory usage)
-        take = min(
-            batch["doses"],
-            remaining
-        )
-
-        # accumulate activity-weighted doses: for ex. 100 doses at 50% activity contribute 50 activity-adjusted doses
-        effective_treatments += (
-            take
-            * future_activity
-        )
-
-        # remove reserved doses from inventory and from dose requirement
-        batch["doses"] -= take
-        remaining -= take
-
-    # Actual treatments started
-    actual_doses_reserved = (
-        doses_needed - remaining
-    )
-
-    # convert reserved doses back into complete treatment courses (patients treated)
-    new_patients = (
-        actual_doses_reserved
-        / doses_per_treatment
-    )
-
-    # mean treatment activity among all doses deployed today. The average activity that patients will experience at treatment completion.
-    if actual_doses_reserved > 0:
-        mean_treatment_activity = (
-            effective_treatments
-            / actual_doses_reserved
-        )
-    else:
-        mean_treatment_activity = 0
-
-    return (
-        inventory,
-        new_patients,
-        actual_doses_reserved,
-        mean_treatment_activity,
-        max_new_patients
-    )
+        mean_treatment_activity)
 
 def remove_empty_batches(
     inventory
@@ -583,6 +515,32 @@ def calculate_supply_coverage(
     # if nobody requests treatment, demand is fully satisfied by definition
     return 1.0
 
+def variant_accounting(inventory):
+
+    counts = {
+        "wuhan_high_risk": 0,
+        "wuhan_general": 0,
+        "alpha_high_risk": 0,
+        "alpha_general": 0,
+        "delta_high_risk": 0,
+        "delta_general": 0,
+        "omicron_high_risk": 0,
+        "omicron_general": 0
+    }
+
+    for batch in inventory:
+
+        variant = batch["variant"]
+        stock_class = batch["stock_class"]
+        doses = batch["doses"]
+
+        key = f"{variant.lower()}_{stock_class}"
+
+        if key in counts:
+            counts[key] += doses
+
+    return counts
+
 def run_model(
     H,
     I,
@@ -600,6 +558,7 @@ def run_model(
     doses_per_patient_per_day=2,
     donation_volume=0.6,
     donations_per_donor=3,
+    donation_interval=14,
     dose_volume=0.0012,
     delay_inf_to_hosp=7,
     t_start=30,
@@ -629,7 +588,9 @@ def run_model(
     n_days,
     donor_rate,
     capacity_per_day,
-    doses_per_donor,
+    doses_per_donation,
+    donations_per_donor,
+    donation_interval,
     window_start,
     window_end
     )
@@ -650,31 +611,29 @@ def run_model(
     general_demand_series = np.zeros_like(H, dtype=float) 
     reserved_doses_series = np.zeros_like(H, dtype=float)
     discarded_doses = np.zeros_like(H, dtype=float)
-    treatment_efficacy_series = np.zeros_like(H, dtype=float)
+    high_risk_treatment_efficacy_series = np.zeros_like(H, dtype=float)
+    general_treatment_efficacy_series = np.zeros_like(H, dtype=float)
     effective_coverage = np.zeros_like(H, dtype=float)
     stock_efficacy_series = np.zeros_like(H, dtype=float)
     general_patients_series = np.zeros_like(H, dtype=float)
     high_risk_stock_series = np.zeros_like(H)
     general_stock_series = np.zeros_like(H)
 
-    wuhan_high_risk_series = np.zeros_like(H, dtype=float)
-    wuhan_general_series = np.zeros_like(H, dtype=float)
-
-    alpha_high_risk_series = np.zeros_like(H, dtype=float)
-    alpha_general_series = np.zeros_like(H, dtype=float)
-
-    delta_high_risk_series = np.zeros_like(H, dtype=float)
-    delta_general_series = np.zeros_like(H, dtype=float)
-
-    omicron_high_risk_series = np.zeros_like(H, dtype=float)
-    omicron_general_series = np.zeros_like(H, dtype=float)
-
+    variant_series = {
+        "wuhan_high_risk": np.zeros_like(H, dtype=float),
+        "wuhan_general": np.zeros_like(H, dtype=float),
+        "alpha_high_risk": np.zeros_like(H, dtype=float),
+        "alpha_general": np.zeros_like(H, dtype=float),
+        "delta_high_risk": np.zeros_like(H, dtype=float),
+        "delta_general": np.zeros_like(H, dtype=float),
+        "omicron_high_risk": np.zeros_like(H, dtype=float),
+        "omicron_general": np.zeros_like(H, dtype=float)
+    }
 
     C = np.zeros_like(H, dtype=float)
     C_supply = np.zeros_like(H, dtype=float)
 
     supply_limited = np.zeros_like(H, dtype=int)
-    not_supply_limited = np.zeros_like(H, dtype=int)
 
     inventory = []
     for i in range(n_days):
@@ -687,6 +646,15 @@ def run_model(
             initial_ccp_activity,
             minimum_usable_activity,
             variant_changes,
+            decay_mode
+        )
+
+        inventory = classify_inventory(
+            inventory,
+            treatment_duration,
+            daily_activity_decay,
+            high_risk_use_threshold,
+            minimum_usable_activity,
             decay_mode
         )
 
@@ -703,103 +671,53 @@ def run_model(
             * general_population[i]
         )
 
-        high_risk_stock, _ = calculate_available_stock(inventory, treatment_duration, daily_activity_decay, minimum_usable_activity, high_risk_use_threshold, decay_mode)
+        high_risk_stock, general_stock = (
+                summarize_inventory(inventory)
+            )
 
-        inventory, high_risk_patients, high_risk_reserved, high_risk_activity, max_high_risk_patients = allocate_high_risk_patients(
-            inventory, 
-            high_risk_requested, 
-            doses_per_treatment, 
-            treatment_duration, 
-            daily_activity_decay, 
-            high_risk_use_threshold, 
-            high_risk_stock,
-            decay_mode)
-        
-        _, general_stock = calculate_available_stock(inventory, treatment_duration, daily_activity_decay, minimum_usable_activity, high_risk_use_threshold, decay_mode)
+        variant_counts = variant_accounting(inventory)
 
-        inventory, general_patients, general_reserved, general_activity, max_general_patients = allocate_general_patients(
-            inventory,
-            general_requested,
-            doses_per_treatment,
-            treatment_duration,
-            daily_activity_decay,
-            high_risk_use_threshold,
-            minimum_usable_activity,
-            general_stock,
-            decay_mode)
+        for name, value in variant_counts.items():
+            variant_series[name][i] = value
+
+        (   inventory,
+            high_risk_patients, # actual patients that started (can be less than capacity)
+            max_high_risk_patients, # capacity implied by inventory
+            high_risk_reserved,
+            high_risk_activity,
+        ) = allocate_patients(
+                inventory,
+                high_risk_requested,
+                doses_per_treatment,
+                high_risk_stock,
+                "high_risk"
+            )
+
+        (   inventory,
+            general_patients,
+            _, # not analyzing general population stock limits for now
+            general_reserved,
+            general_activity,
+        ) = allocate_patients(
+                inventory,
+                general_requested,
+                doses_per_treatment,
+                general_stock,
+                "general"
+            )
         
         
         high_risk_demand_series[i] = high_risk_requested
         general_demand_series[i] = general_requested
         general_patients_series[i] = general_patients
         high_risk_patients_series[i] = high_risk_patients
-        treatment_efficacy_series[i] = high_risk_activity
+        high_risk_treatment_efficacy_series[i] = high_risk_activity
+        general_treatment_efficacy_series[i] = general_activity
         high_risk_stock_series[i] = high_risk_stock
         general_stock_series[i] = general_stock
 
 
         inventory = remove_empty_batches(inventory)
-
-        wuhan_high_risk = 0
-        wuhan_general = 0
-        alpha_high_risk = 0
-        alpha_general = 0
-        delta_high_risk = 0
-        delta_general = 0
-        omicron_high_risk = 0
-        omicron_general = 0
-        for batch in inventory:
-
-            future_activity = project_activity(
-                batch["activity"],
-                daily_activity_decay,
-                treatment_duration,
-                decay_mode
-            )
-
-            is_high_risk = (
-                future_activity >= high_risk_use_threshold
-            )
-
-            variant = batch["variant"]
-            doses = batch["doses"]
-
-            if variant == "Wuhan":
-
-                if is_high_risk:
-                    wuhan_high_risk += doses
-                else:
-                    wuhan_general += doses
-
-            elif variant == "Alpha":
-
-                if is_high_risk:
-                    alpha_high_risk += doses
-                else:
-                    alpha_general += doses
-
-            elif variant == "Delta":
-
-                if is_high_risk:
-                    delta_high_risk += doses
-                else:
-                    delta_general += doses
-
-            elif variant == "Omicron":
-
-                if is_high_risk:
-                    omicron_high_risk += doses
-                else:
-                    omicron_general += doses
-
-        wuhan_high_risk_series[i] = wuhan_high_risk
-        wuhan_general_series[i] = wuhan_general
-        alpha_high_risk_series[i] = alpha_high_risk
-        alpha_general_series[i] = alpha_general
-        delta_high_risk_series[i] = delta_high_risk
-        delta_general_series[i] = delta_general
-        omicron_high_risk_series[i] = omicron_high_risk
-        omicron_general_series[i] = omicron_general
 
         # patients remain active for the entire treatment duration 
         # even though inventory was already reserved at treatment initiation
@@ -823,7 +741,7 @@ def run_model(
             )
         )
 
-        # Coverage: defined as treated patients/eligible patients
+        # Coverage:
         C[i], effective_coverage[i] = (
             calculate_coverage(
                 high_risk_patients,
@@ -840,12 +758,8 @@ def run_model(
         
         # identify limiting factor 
         if max_high_risk_patients < high_risk_requested: # more requests than availability
-
             supply_limited[i] = 1
 
-        else:
-
-            not_supply_limited[i] = 1
 
         # daily delivered doses (for reporting) - 
         # daily delivered today corrspond to the treatment courses started today
@@ -906,23 +820,16 @@ def run_model(
         "discarded_doses": discarded_doses,
         "high_risk_stock": high_risk_stock_series,
         "general_stock": general_stock_series,
-        "wuhan_high_risk": wuhan_high_risk_series,
-        "wuhan_general": wuhan_general_series,
-        "alpha_high_risk": alpha_high_risk_series,
-        "alpha_general": alpha_general_series,
-        "delta_high_risk": delta_high_risk_series,
-        "delta_general": delta_general_series,
-        "omicron_high_risk": omicron_high_risk_series,
-        "omicron_general": omicron_general_series,
+        **variant_series,
 
 
         # Activity
-        "end_treatment_efficacy": treatment_efficacy_series,
+        "high_risk_end_treatment_efficacy": high_risk_treatment_efficacy_series,
+        "general_end_treatment_efficacy": general_treatment_efficacy_series,
         "mean_stock_efficacy": stock_efficacy_series,
 
         # Capacity diagnostics
         "supply_limited": supply_limited,
-        "not_supply_limited": not_supply_limited,
 
         # Constants needed later
         "doses_per_treatment": doses_per_treatment,
@@ -1020,7 +927,6 @@ def plot_results(results, summary):
     general_demand = results["general_demand"]
 
     supply_limited = results["supply_limited"]
-    not_supply_limited = results["not_supply_limited"]
 
     ## PLOTS
     fig, axs = plt.subplots(2, 2, figsize=(14, 8), sharex=True)
@@ -1270,9 +1176,9 @@ if __name__ == "__main__":
     }
 
     variant_penalties = {
-        "Alpha": 0.15,
-        "Delta": 0.15,
-        "Omicron": 0.15
+        "Alpha": 0.3,
+        "Delta": 0.3,
+        "Omicron": 0.3
     }
 
     for variant, date_str in variant_dates.items():

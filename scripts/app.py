@@ -98,12 +98,41 @@ delay_inf_to_hosp = 7 # 7 days according to cross-correlation between hospitaliz
 #region
 
 def format_axes(ax):
-    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=6))  # every 6 months
-    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))  # format
+
+    # Align all plots
+    ax.figure.subplots_adjust(
+        left=0.20,
+        right=0.97,
+        bottom=0.22,
+        top=0.92
+    )
+
+    # Date axis
+    ax.xaxis.set_major_locator(
+        mdates.MonthLocator(interval=6)
+    )
+    ax.xaxis.set_major_formatter(
+        mdates.DateFormatter('%Y-%m')
+    )
+
+    # Tick labels
+    ax.tick_params(
+        axis="both",
+        labelsize=6
+    )
 
     for label in ax.get_xticklabels():
         label.set_rotation(45)
-        label.set_horizontalalignment('right')
+        label.set_horizontalalignment("right")
+
+    # Axis labels
+    ax.xaxis.label.set_size(7)
+    ax.yaxis.label.set_size(7)
+
+    # Title
+    ax.title.set_size(8)
+
+    ax.margins(x=0)
 
 def run_tornado(parameter_list):
 
@@ -179,6 +208,7 @@ def run_tornado(parameter_list):
                 doses_per_patient_per_day=doses_per_patient_per_day,
                 donation_volume=donation_volume,
                 donations_per_donor=params["donations_per_donor"],
+                donation_interval=donation_interval,
                 dose_volume=dose_volume,
                 delay_inf_to_hosp=delay_inf_to_hosp,
                 t_start=params["t_start"],
@@ -471,11 +501,12 @@ with tab_model:
     )
     donation_volume = float(st.sidebar.text_input("Donation volume (L)", 0.6))
     donations_per_donor = int(st.sidebar.text_input("Donations per donor", 3)) # how many times the donor can go donate in the window of donation pos-infection
+    donation_interval = int(st.sidebar.text_input("Interval between donation", 14)) # 2 weeks between donations
     capacity_per_day = st.sidebar.slider(
         "Maximum donations/day",
         min_value=1,
         max_value=450,
-        value=20,
+        value=100,
         step=1
     )
     # ---------
@@ -512,6 +543,7 @@ with tab_model:
         doses_per_patient_per_day=doses_per_patient_per_day,
         donation_volume=donation_volume,
         donations_per_donor=donations_per_donor,
+        donation_interval=donation_interval,
         dose_volume=dose_volume,
         delay_inf_to_hosp=delay_inf_to_hosp,
         t_start=t_start,
@@ -773,7 +805,7 @@ with tab_model:
 
     ## PLOTS
     #region
-    fig, ax = plt.subplots(figsize=(8, 4))
+    fig, ax = plt.subplots(figsize=(6, 3))
     # Hospitalizations reduction (main plot)
     show_infections = st.toggle(
     "Show infections instead of % reduction",
@@ -824,13 +856,14 @@ with tab_model:
     # Combine legends
     lines, labels = ax.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
-    ax.legend(handles=lines + lines2, labels=labels + labels2, loc='center right')
+    ax.legend(handles=lines + lines2, labels=labels + labels2, loc='center right', fontsize=7)
     ax.grid()
     format_axes(ax)
+    format_axes(ax2)
     st.pyplot(fig, width="stretch")
 
     # Cumulative prevented
-    fig, ax = plt.subplots(figsize=(8, 4))
+    fig, ax = plt.subplots(figsize=(6, 3))
     cumulative_prevented = np.cumsum(results["H_prevented"])
     ax.plot(
         dates,
@@ -841,12 +874,13 @@ with tab_model:
     )
     total_prevented = np.sum(results["H_prevented"])
     ax.text(
-        0.01,
-        0.99,
+        0.03,
+        0.96,
         f"Prevented: {total_prevented:,.0f}",
         transform=ax.transAxes,
         verticalalignment="top",
-        bbox=dict(facecolor="white", alpha=0.8)
+        bbox=dict(facecolor="white", alpha=0.8),
+        fontsize=6
     )
     ax.set_ylabel("Cumulative hospitalizations prevented")
     ax.set_title("Hospital admissions prevented through i.n. CCP")
@@ -855,22 +889,22 @@ with tab_model:
     st.pyplot(fig, width="stretch")
 
     # Flows (produced, delivered, discarded)
-    fig, ax = plt.subplots(figsize=(8, 4))
-    ax.plot(dates, results["daily_production"]/ results["doses_per_treatment"], label="Production", color="blue")
-    ax.plot(dates, results["daily_reserved_doses"] / results["doses_per_treatment"], label="Delivered", color="green")
-    ax.plot(dates, results["discarded_doses"] / results["doses_per_treatment"], label="Discarded", color="red")
+    fig, ax = plt.subplots(figsize=(6, 3))
+    ax.plot(dates, results["daily_production"]/ results["doses_per_treatment"], label="Production", color="blue", linewidth=2, alpha=0.5)
+    ax.plot(dates, results["daily_reserved_doses"] / results["doses_per_treatment"], label="Delivered", color="green", linewidth=1)
+    ax.plot(dates, results["discarded_doses"] / results["doses_per_treatment"], label="Discarded", color="red", linewidth=1)
     ax.set_ylabel("Treatment courses/day")
-    ax.legend()
+    ax.legend(fontsize=7)
     ax.grid()
     ax.set_title("Operational flows")
     format_axes(ax)
     st.pyplot(fig, width="stretch")
 
     # Stock
-    fig, ax = plt.subplots(figsize=(8, 4))
-    ax.plot(dates, results["stock"] / results["doses_per_treatment"], label="Stock", color="blue", linewidth=2)
-    ax.plot(dates, results["high_risk_stock"] / results["doses_per_treatment"], label="High-risk stock", color="red", linewidth=2)
-    ax.plot(dates, results["general_stock"] / results["doses_per_treatment"], label="General-use stock", color="green", linewidth=2)
+    fig, ax = plt.subplots(figsize=(6, 3))
+    ax.plot(dates, results["stock"] / results["doses_per_treatment"], label="Stock", color="blue", linewidth=2, alpha=0.5)
+    ax.plot(dates, results["high_risk_stock"] / results["doses_per_treatment"], label="High-risk stock", color="red", linewidth=1)
+    ax.plot(dates, results["general_stock"] / results["doses_per_treatment"], label="General-use stock", color="green", linewidth=1)
     ax.set_ylabel("Treatment courses in inventory")
     ax.set_title("Inventory")
     ax.legend(fontsize=7)
@@ -879,7 +913,7 @@ with tab_model:
     st.pyplot(fig, width="stretch")
 
     # Demand and treated (high-risk)
-    fig, ax = plt.subplots(figsize=(8, 4))
+    fig, ax = plt.subplots(figsize=(6, 3))
     ax.plot(
         dates,
         results["high_risk_demand"],
@@ -890,17 +924,18 @@ with tab_model:
         dates,
         results["high_risk_patients"],
         label="High-risk treated",
-        color="red"
+        color="red",
+        linewidth=0.5
     )
     ax.set_ylabel("Patients/day")
-    ax.legend()
+    ax.legend(fontsize=7)
     ax.grid()
     ax.set_title("High-risk: demand and delivery")
     format_axes(ax)
     st.pyplot(fig, width="stretch")
 
     # Demand and treated (general)
-    fig, ax = plt.subplots(figsize=(8, 4))
+    fig, ax = plt.subplots(figsize=(6, 3))
     ax.plot(
     dates,
     results["general_demand"],
@@ -915,53 +950,30 @@ with tab_model:
         label="General treated",
         color="green"
     )
-    ax.legend()
+    ax.legend(fontsize=7)
     ax.grid()
     ax.set_title("General population: demand and delivery")
     format_axes(ax)
     st.pyplot(fig, width="stretch")
 
-    # Stock by variant
-    fig, ax = plt.subplots(figsize=(8, 4))
-    ax.stackplot(
-        dates,
-        results["wuhan_high_risk"] + results["wuhan_general"],
-        results["alpha_high_risk"] + results["alpha_general"],
-        results["delta_high_risk"] + results["delta_general"],
-        results["omicron_high_risk"] + results["omicron_general"],
-        labels=[
-            "Wuhan",
-            "Alpha",
-            "Delta",
-            "Omicron"
-        ]
-    )
-    ax.set_title(
-        "Inventory composition by variant"
-    )
-    ax.set_ylabel("Doses")
-    ax.legend()
-    ax.grid()
-    format_axes(ax)
-    st.pyplot(fig, width="stretch")
 
     # Stock by variant and eligibility
-    fig, ax = plt.subplots(figsize=(8, 4))
+    fig, ax = plt.subplots(figsize=(6, 3))
 
     ax.stackplot(
         dates,
 
-        results["wuhan_high_risk"],
-        results["wuhan_general"],
+        results["wuhan_high_risk"] / results["doses_per_treatment"],
+        results["wuhan_general"] / results["doses_per_treatment"],
 
-        results["alpha_high_risk"],
-        results["alpha_general"],
+        results["alpha_high_risk"] / results["doses_per_treatment"],
+        results["alpha_general"] / results["doses_per_treatment"],
 
-        results["delta_high_risk"],
-        results["delta_general"],
+        results["delta_high_risk"] / results["doses_per_treatment"],
+        results["delta_general"] / results["doses_per_treatment"],
 
-        results["omicron_high_risk"],
-        results["omicron_general"],
+        results["omicron_high_risk"] / results["doses_per_treatment"],
+        results["omicron_general"] / results["doses_per_treatment"],
 
         colors=[
             "#08306b",  # dark blue
@@ -973,7 +985,7 @@ with tab_model:
             "#00441b",  
             "#74c476",  
 
-            "#80761A",  
+            "#F7A205",  
             "#f8fb4a"   
         ],
 
@@ -992,37 +1004,63 @@ with tab_model:
         ]
     )
 
-    ax.set_title(
-        "Inventory composition by variant and eligibility"
-    )
-
-    ax.set_ylabel("Doses")
-    ax.legend(ncol=2, fontsize=6)
+    ax.set_ylabel("Treatment courses")
+    ax.legend(bbox_to_anchor=(0.4, 1.05))
     ax.grid()
+
+    # Shrink current axis's height by 10% on the bottom
+    box = ax.get_position()
+    ax.set_position([box.x0, box.y0 + box.height * 0.1,
+                    box.width, box.height * 0.9])
+    ax.set_title("Inventory composition by variant and eligibility", pad=25)
+    # Put a legend below current axis
+    ax.legend(ncol=4, fontsize=5, loc='upper center', bbox_to_anchor=(0.5, 1.15))
     format_axes(ax)
+
     st.pyplot(fig, width="stretch")
 
-    # Production
-    fig, ax = plt.subplots(figsize=(8, 4))
+    # Coverage, efficacy and adoption
+    fig, ax = plt.subplots(figsize=(6, 3))
     ax.plot(
         dates,
         results["coverage"],
-        label="High-risk coverage"
+        label="High-risk coverage", 
+        linewidth=0.5
     )
     ax.plot(
         dates,
         results["coverage_effective"],
-        label="Effective coverage"
+        label="Effective coverage", 
+        linewidth=1
     )
     ax.plot(
         dates,
-        results["end_treatment_efficacy"],
-        label="End of treatment efficacy"
+        results["high_risk_end_treatment_efficacy"],
+        "--",
+        label="High-risk end of treatment efficacy", 
+        linewidth=1
     )
+    general_eff = np.where(
+        results["general_end_treatment_efficacy"] > 0,
+        results["general_end_treatment_efficacy"],
+        np.nan
+    )
+
+    if np.any(~np.isnan(general_eff)):
+
+        ax.plot(
+            dates,
+            general_eff,
+            "--",
+            label="General end of treatment efficacy",
+            linewidth=1
+        )
     ax.plot(
         dates,
         results["mean_stock_efficacy"],
-        label="Stock efficacy"
+        ":",
+        label="Stock efficacy", 
+        linewidth=1
     )
     ax.plot(
         dates,
@@ -1032,8 +1070,6 @@ with tab_model:
         label="Adoption",
         linewidth=1
     )
-    ax.set_ylabel("Fraction (activity)")
-    ax.set_ylim(0,1.1)
     ax.fill_between(
     dates,
     0,
@@ -1043,11 +1079,60 @@ with tab_model:
     alpha=0.1,
     label="Supply limited"
     )
-    ax.legend(fontsize=6)
+    ax.set_ylabel("Fraction (activity)")
+    ax.set_ylim(0,1.1)
+    ax.set_position([box.x0, box.y0 + box.height * 0.1,
+                    box.width, box.height * 0.9])
+    ax.set_title("Coverage, efficacy and adoption", pad=25)
+    ax.legend(ncol=4, fontsize=5, loc='upper center', bbox_to_anchor=(0.5, 1.15))
     ax.grid()
     format_axes(ax)
     st.pyplot(fig, width="stretch")
-    
+
+    # Relative inventory composition
+    fig, ax = plt.subplots(figsize=(6, 3))
+
+    total_classified_stock = (
+        results["high_risk_stock"]
+        + results["general_stock"]
+    )
+
+    high_risk_fraction = (
+        100
+        * results["high_risk_stock"]
+        / np.maximum(total_classified_stock, 1)
+    )
+
+    general_fraction = (
+        100
+        * results["general_stock"]
+        / np.maximum(total_classified_stock, 1)
+    )
+
+    ax.stackplot(
+        dates,
+        high_risk_fraction,
+        general_fraction,
+        labels=[
+            "High-risk eligible",
+            "General-use"
+        ],
+        colors=[
+            "#d62728",
+            "#2ca02c"
+        ]
+    )
+
+    ax.set_ylim(0, 100)
+    ax.set_ylabel("% of inventory")
+    ax.set_title(
+        "Inventory eligibility composition"
+    )
+    ax.legend()
+    ax.grid()
+    format_axes(ax)
+
+    st.pyplot(fig, width="stretch")
 
     # configs
     st.set_page_config(
@@ -1221,6 +1306,7 @@ with tab_sensitivity:
             doses_per_patient_per_day=doses_per_patient_per_day,
             donation_volume=donation_volume,
             donations_per_donor=test_donations_per_donor,
+            donation_interval=donation_interval,
             dose_volume=test_dose,
             delay_inf_to_hosp=delay_inf_to_hosp,
             t_start=test_t_start,
@@ -1234,7 +1320,7 @@ with tab_sensitivity:
         )
 
         
-    fig, ax = plt.subplots(figsize=(8, 4))
+    fig, ax = plt.subplots(figsize=(6, 3))
 
     ax.plot(
         x_values,
