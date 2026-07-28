@@ -148,7 +148,6 @@ def run_tornado(parameter_list):
             # copy baseline parameters
             params = {
                 "initial_ccp_activity": initial_ccp_activity,
-                "daily_activity_decay": daily_activity_decay,
                 "minimum_usable_activity": minimum_usable_activity,
                 "potential_donor_rate": potential_donor_rate,
                 "capacity_per_day": capacity_per_day,
@@ -163,9 +162,6 @@ def run_tornado(parameter_list):
 
                 case "Initial CCP activity":
                     params["initial_ccp_activity"] = value
-
-                case "Daily activity decay":
-                    params["daily_activity_decay"] = value
 
                 case "Minimum usable activity":
                     params["minimum_usable_activity"] = value
@@ -197,8 +193,6 @@ def run_tornado(parameter_list):
                 variant_changes,
                 initial_ccp_activity=0.70,
                 high_risk_use_threshold=0.50,
-                daily_activity_decay=0.002,
-                decay_mode = "exponential",
                 minimum_usable_activity = 0.05,
                 A_max=params["A_max"],
                 capacity_per_day=params["capacity_per_day"],
@@ -208,7 +202,7 @@ def run_tornado(parameter_list):
                 doses_per_patient_per_day=doses_per_patient_per_day,
                 donation_volume=donation_volume,
                 donations_per_donor=params["donations_per_donor"],
-                donation_interval=donation_interval,
+                min_donation_interval=donation_interval,
                 dose_volume=dose_volume,
                 delay_inf_to_hosp=delay_inf_to_hosp,
                 t_start=params["t_start"],
@@ -396,7 +390,7 @@ with tab_model:
 
     # % reduction in hospitalization risk
     initial_ccp_activity = st.sidebar.slider(
-        "Initial CCP activity (effectiveness at collection)",
+        "Initial CCP activity (effectiveness at 30 days after infection)",
         min_value=0.01,
         max_value=1.00,
         value=0.7,
@@ -406,22 +400,10 @@ with tab_model:
         "Activity threshold for high-risk usage",
         min_value=0.01,
         max_value=1.0,
-        value=0.50,
+        value=0.40,
         step=0.01,
         format="%0.2f"
     )    
-    daily_activity_decay = st.sidebar.slider(
-        "Daily CPP activity decay",
-        min_value=0.0001,
-        max_value=0.05,
-        value=0.002,
-        step=0.0001,
-        format="%0.4f"
-    )
-    decay_mode = st.sidebar.radio(
-    "Function for activity decay",
-    ["exponential", "linear"]
-    )
     minimum_usable_activity = st.sidebar.slider(
         "CCP expiry activity (remove from stock)",
         min_value=0.001,
@@ -501,7 +483,7 @@ with tab_model:
     )
     donation_volume = float(st.sidebar.text_input("Donation volume (L)", 0.6))
     donations_per_donor = int(st.sidebar.text_input("Donations per donor", 3)) # how many times the donor can go donate in the window of donation pos-infection
-    donation_interval = int(st.sidebar.text_input("Interval between donation", 14)) # 2 weeks between donations
+    donation_interval = int(st.sidebar.text_input("Minimum interval between donations", 14)) # 2 weeks between donations
     capacity_per_day = st.sidebar.slider(
         "Maximum donations/day",
         min_value=1,
@@ -532,8 +514,6 @@ with tab_model:
         variant_changes,
         initial_ccp_activity = initial_ccp_activity,
         high_risk_use_threshold = high_risk_use_threshold,
-        daily_activity_decay = daily_activity_decay,
-        decay_mode = decay_mode,
         minimum_usable_activity = minimum_usable_activity,
         A_max=A_max,
         capacity_per_day=capacity_per_day,
@@ -543,7 +523,7 @@ with tab_model:
         doses_per_patient_per_day=doses_per_patient_per_day,
         donation_volume=donation_volume,
         donations_per_donor=donations_per_donor,
-        donation_interval=donation_interval,
+        min_donation_interval=donation_interval,
         dose_volume=dose_volume,
         delay_inf_to_hosp=delay_inf_to_hosp,
         t_start=t_start,
@@ -566,8 +546,8 @@ with tab_model:
     Biological activity of newly produced CCP at the time of collection.
     - 0.70 = newly collected plasma starts at 70% activity
 
-    Activity declines over time due to decay and decreases suddenly when new variants emerge.
-                    
+    Activity only changes when variant transitions occur and reduce the effectiveness of plasma generated from earlier infections.  
+
     ---
 
     ### Infection-to-hospitalization delay - 7 days (fixed)
@@ -580,36 +560,26 @@ with tab_model:
     Minimum projected (at the end of treatment) activity required for CCP to be allocated to the high-risk population.
     - 0.50 = plasma projected to retain at least 50% activity at the last day of treatment is reserved for high-risk individuals.
 
-    ---
-                    
-    ### Daily CCP activity decay
-    Loss of CCP activity every day during storage.
-    - 0.002 = 0.2% activity loss per day
-
-    Activity decay affects inventory quality and future treatment effectiveness
-
-    ---    
-    
-    ### Activity decay function
-    Mathematical form used to model activity decline (exponential decay or linear decay).
     
     ---    
 
     ### CCP expiry activity
-    Minimum activity required for plasma to remain in inventory. It is discarded after crossing the threshold.
-    - 0.05 = discard plasma with less than 5% remaining activity
+    Minimum projected end-of-treatment activity required for plasma to remain usable.
+    Plasma is discarded when its projected activity at the end of a newly initiated treatment falls below this threshold.
+
+    - 0.05 = CCP expected to retain less than 5% activity by the end of treatment is not allocated to new patients.
 
     ---
 
     ### Variant activity penalties
     One-time reductions in CCP activity applied to the stock so far when a new variant becomes dominant.
-    - Affects all CCP already in inventory on the day of variant emergence.
+    A penalty is applied whenever a variant becomes dominant between:
+    - donor infection and plasma collection, or
+    - treatment initiation and treatment completion.
                     
     Example:
     - Penalty = 0.30
     - Activity = 0.70 → 0.49
-
-    After the penalty, normal activity decay continues.
 
     --- 
                                                 
@@ -660,7 +630,7 @@ with tab_model:
     ---
 
     ### Window start
-    Earliest time after infection at which donation becomes possible.
+    Earliest time after infection at which donation becomes possible and the date of the first donation.
     Example:
     - 30 = donation possible beginning 30 days after infection
                     
@@ -672,6 +642,13 @@ with tab_model:
                     
     Together, Window start and Window end define the donation window used for donor recruitment.
                     
+    ---
+
+    ### Minimum donation interval 
+    Minimum time allowed between two donations from the same donor.
+    Defaults to 14 days.
+    When a variant transition is approaching, donations may be moved closer together to this min interval in order to collect plasma before activity is affected.
+
     ---
 
     ## Operational / Supply Chain Parameters
@@ -687,7 +664,8 @@ with tab_model:
 
     ### Donations per donor
     Number of donations obtained from each donor.
-    Higher values increase total production. Defaults to 3.
+    The collection schedule is optimized to maximize spacing between donations while preserving as many donations as possible before the next variant transition.
+    A value of 1 corresponds to a single collection 30 days after infection. Defaults to 3.
                     
     ---
 
@@ -782,7 +760,7 @@ with tab_model:
     #region
     st.subheader("Key Results")
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
 
     with col1:
         st.metric(
@@ -792,11 +770,19 @@ with tab_model:
 
     with col2:
         st.metric(
-            "Average coverage",
+            "Average high-risk people reached",
             f"{100*summary['average_coverage']:.1f}%"
         )
 
+    col3, col4 = st.columns(2)
+
     with col3:
+        st.metric(
+            "Average hospitalizations prevented",
+            f"{100*summary['average_effective_coverage']:.1f}%"
+        )
+
+    with col4:
         st.metric(
             "Discard rate",
             f"{100*summary['total_discarded']/summary['total_produced']:.1f}%"
@@ -1212,11 +1198,10 @@ with tab_sensitivity:
 
     parameters_dict = {
                         "Initial CCP activity": [0.1, 1.00],
-                        "Daily activity decay": [0.0001, 0.005],
                         "Minimum usable activity": [0.01, 0.1],
                         "Dose volume per nostril": [100, 600],
                         "Potential donor rate": [0.01, 1.00],
-                        "Donations per donor": [1, 4],
+                        "Donations per donor": [1, 10],
                         "Maximum donations/day": [1, 450],
                         "Maximum adoption": [0.01, 1.00],
                         "Start time": [0, 200],
@@ -1245,7 +1230,6 @@ with tab_sensitivity:
 
         test_initial_ccp_activity = initial_ccp_activity
         test_high_risk_use_threshold = high_risk_use_threshold
-        test_daily_activity_decay = daily_activity_decay
         test_minimum_usable_activity = minimum_usable_activity
         test_dose = dose_volume
         test_potential_donor_rate = potential_donor_rate
@@ -1257,9 +1241,6 @@ with tab_sensitivity:
 
         if parameter == "Initial CCP activity":
             test_initial_ccp_activity = value
-        
-        elif parameter == "Daily activity decay":
-            test_daily_activity_decay = value
         
         elif parameter == "Minimum usable activity":
             test_minimum_usable_activity = value
@@ -1295,8 +1276,6 @@ with tab_sensitivity:
             variant_changes,
             initial_ccp_activity=test_initial_ccp_activity,
             high_risk_use_threshold=test_high_risk_use_threshold,
-            daily_activity_decay=test_daily_activity_decay,
-            decay_mode = "exponential",
             minimum_usable_activity=test_minimum_usable_activity,
             A_max=test_A_max,
             capacity_per_day=test_capacity,
@@ -1306,7 +1285,7 @@ with tab_sensitivity:
             doses_per_patient_per_day=doses_per_patient_per_day,
             donation_volume=donation_volume,
             donations_per_donor=test_donations_per_donor,
-            donation_interval=donation_interval,
+            min_donation_interval=donation_interval,
             dose_volume=test_dose,
             delay_inf_to_hosp=delay_inf_to_hosp,
             t_start=test_t_start,
@@ -1348,7 +1327,6 @@ with tab_sensitivity:
     # I,
     # variant_changes,
     # initial_ccp_activity=initial_ccp_activity,
-    # daily_activity_decay=daily_activity_decay,
     # minimum_usable_activity=minimum_usable_activity,
     # A_max=A_max,
     # capacity_per_day=capacity_per_day,
@@ -1386,7 +1364,6 @@ with tab_sensitivity:
    
     # baseline_values = {
     #     "Initial CCP activity": initial_ccp_activity,
-    #     "Daily activity decay": daily_activity_decay,
     #     "Minimum usable activity": minimum_usable_activity,
     #     "Potential donor rate": potential_donor_rate,
     #     "Donations per donor": donations_per_donor,
