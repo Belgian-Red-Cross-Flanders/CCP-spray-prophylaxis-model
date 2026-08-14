@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from pathlib import Path
+import math
 
 # Debug output directory
 debug_dir = (
@@ -392,6 +393,14 @@ def calculate_batch_activity(
 def build_donation_schedule(
         infection_day, donations_per_donor, min_donation_interval, window_start, window_end, variant_changes
 ):
+    """
+    Constructs schedule of donations for a donor after infection. (all donors on this day have the same schedule)
+    - First donation is at infection day + window start
+    - produce exactly this number of donations per donor
+    - attempts to spread donations evenly across the available sampling window, but when there is a variant transition it groups the donations before this
+    - maintains a minimum donation interval when estimating how many donations can fit before a variant change
+
+    """
 
     # first eligible donation. Donation 1 is fixed at window start
     first_donation_day = (infection_day + window_start)
@@ -405,12 +414,12 @@ def build_donation_schedule(
     # default schedule is evenly spread through window
     donation_days = np.linspace(first_donation_day, last_donation_day, donations_per_donor).round().astype(int)
 
-    # look for the next variant after infection
+    # look for the next variant dominance transition after 1st collection (we have a cross-neutralization table so it can be more than 1 variant of distance between infection and usage, that's ok)
     next_variant_day = None
     if variant_changes:
         for event in variant_changes:
-            if event["day"] > infection_day:
-                next_variant_day = event["day"] # found a variant transition after the infection
+            if event["day"] > first_donation_day:
+                next_variant_day = event["day"] # found a variant transition after the donation
                 break
 
     if next_variant_day is not None: # determine how many donations can happen before next variant
@@ -497,16 +506,10 @@ def calculate_daily_batches(
                 - infection_day
             )
 
-            # calculate activity of the batch donated at donation day - it is lower if the variant changed since the donor got infected
-            activity = calculate_batch_activity(infection_day, donation_day, initial_ccp_activity, window_start, variant_changes)
+            activity = initial_ccp_activity # initialize with the full activity
 
             # determine donor infection variant
-            donor_variant = "Wuhan"
-
-            if variant_changes:
-                for event in variant_changes:
-                    if infection_day >= event["day"]:
-                        donor_variant = event["name"]
+            donor_variant = get_variant(variant_changes, donation_day)
 
             daily_batches[
                 donation_day
@@ -728,11 +731,7 @@ def calculate_daily_batches(
 
         plt.close(fig)
 
-
-
     return daily_batches
-
-
 
 
 def update_inventory(
@@ -746,7 +745,6 @@ def update_inventory(
     # age the inventory (all plasma batch ages 1 day) (even though right now it does not lose efficacy when ageing)
     for batch in inventory:
         batch["age"] += 1
-
 
     # today's production (prepare to save the age of each stock addition)
     for batch in daily_batches[day]:
@@ -763,6 +761,27 @@ def update_inventory(
 
     return inventory
 
+def get_variant(variant_changes, day):
+    """
+    Returns the dominant variant on a given day.
+
+    Assumes variant_changes is sorted chronologically:
+    [
+        {"day": 365, "name": "Alpha"},
+        {"day": 500, "name": "Delta"},
+        {"day": 700, "name": "Omicron"}
+    ]
+    """
+
+    variant = "Wuhan"
+
+    for event in variant_changes:
+        if day >= event["day"]:
+            variant = event["name"]
+        else:
+            break
+
+    return variant
 
 def classify_inventory(
     inventory,
@@ -770,23 +789,59 @@ def classify_inventory(
     treatment_duration,
     variant_changes,
     high_risk_use_threshold,
-    minimum_usable_activity
+    minimum_usable_activity,
+    max_storage_age
 ):
-    # Classifies the batches based on their activity at end of treatment - if it's enough, it goes to high-risk patients, if below threshold, goes to general population.
+    # Classifies the batches based on their activity at end of treatment if it would be deployed today - if it's enough, it goes to high-risk patients, if below threshold, goes to general population.
     # If end treatment activity is below minimum usable, the batch gets deleted
 
+    cross_neutralization = {
+        "Wuhan": {
+            "Wuhan": 1.00,
+            "Alpha": 1/np.sqrt(2.3), # 0.66
+            "Delta": 1/np.sqrt(1.6), # 0.79
+            "Omicron": 1/np.sqrt(20) # 0.22
+        },
+
+        "Alpha": {
+            "Alpha": 1.00,
+            "Delta": 1/np.sqrt(2.2), # 0.67
+            "Omicron": 1/np.sqrt(50) # 0.14
+        },
+
+        "Delta": {
+            "Delta": 1.00,
+            "Omicron": 1/np.sqrt(11) # 0.30
+        },
+
+        "Omicron": {
+            "Omicron": 1.00
+        }
+    }
+
     treatment_end_day = current_day + treatment_duration
+
+    future_variant = get_variant(
+        variant_changes,
+        treatment_end_day
+    )
+
     expired_today = 0
     surviving_inventory = []
     for batch in inventory:
 
-        future_activity = batch["activity"] # in principle, there's no decay unless there's variant change
+        # storage expiry
+        if batch["age"] > max_storage_age:
+            expired_today += batch["doses"]
+            continue
 
-        if variant_changes:
-            for event in variant_changes:
-                # if there is any variant change in the treatment period, the future activity is penalized
-                if(current_day < event["day"] <= treatment_end_day):
-                    future_activity *= (1-event["penalty"])
+        donor_variant = batch["variant"]
+
+        future_activity = (
+            batch["activity"]
+            * cross_neutralization[donor_variant][future_variant]
+        )
+
         batch["future_activity"] = future_activity
 
         if (
@@ -854,7 +909,7 @@ def allocate_patients(
 
     remaining = doses_needed
     effective_treatments = 0
-
+    doses_age = []
     for batch in inventory:
 
         if remaining <= 0:
@@ -876,6 +931,8 @@ def allocate_patients(
         batch["doses"] -= take
         remaining -= take
 
+        doses_age.append({"doses":take, "age":batch["age"]})
+    
     actual_doses_reserved = (
         doses_needed - remaining
     )
@@ -901,7 +958,8 @@ def allocate_patients(
         new_patients,
         max_new_patients,
         actual_doses_reserved,
-        mean_treatment_activity)
+        mean_treatment_activity,
+        doses_age)
 
 def remove_empty_batches(
     inventory
@@ -1000,8 +1058,9 @@ def run_model(
     I,
     variant_changes,
     initial_ccp_activity=0.70,
-    high_risk_use_threshold=0.50,
+    high_risk_use_threshold=0.40,
     minimum_usable_activity = 0.05,
+    max_storage_age = 365,
     A_max=1.0,
     capacity_per_day=100,
     treatment_duration=90,
@@ -1049,7 +1108,7 @@ def run_model(
     window_end,
     initial_ccp_activity,
     variant_changes,
-    debug = True
+    debug = False
     )
 
     daily_doses = np.zeros(n_days)
@@ -1105,6 +1164,8 @@ def run_model(
 
 
     inventory = []
+    high_risk_ages = []
+    general_ages = []
     for i in range(n_days):
 
         inventory = update_inventory(
@@ -1120,7 +1181,8 @@ def run_model(
             treatment_duration,
             variant_changes,
             high_risk_use_threshold,
-            minimum_usable_activity
+            minimum_usable_activity,
+            max_storage_age
         )
 
         discarded_doses[i] = expired_today
@@ -1145,11 +1207,13 @@ def run_model(
         for name, value in variant_counts.items():
             variant_series[name][i] = value
 
+
         (   inventory,
             high_risk_patients, # actual patients that started (can be less than capacity)
             max_high_risk_patients, # capacity implied by inventory
             high_risk_reserved,
             high_risk_activity,
+            doses_age_high_risk
         ) = allocate_patients(
                 inventory,
                 high_risk_requested,
@@ -1163,6 +1227,7 @@ def run_model(
             _, # not analyzing general population stock limits for now
             general_reserved,
             general_activity,
+            doses_age_general
         ) = allocate_patients(
                 inventory,
                 general_requested,
@@ -1171,7 +1236,9 @@ def run_model(
                 "general"
             )
         
-        
+        high_risk_ages.append(doses_age_high_risk)
+        general_ages.append(doses_age_general)
+
         high_risk_demand_series[i] = high_risk_requested
         general_demand_series[i] = general_requested
         general_patients_series[i] = general_patients
@@ -1240,6 +1307,8 @@ def run_model(
         delay_inf_to_hosp
     )
     C_effective[:delay_inf_to_hosp] = 0
+
+
 
     # --------------------------
     # APPLY MODEL
@@ -1611,245 +1680,6 @@ def plot_results(results, summary):
     plt.show()
 
 
-def debug_calculate_batch_activity(
-    donation_window_start,
-    donation_window_end,
-    min_donation_interval,
-    donations_per_donor,
-    initial_ccp_activity,
-    variant_changes
-):
-
-    fig, ax = plt.subplots(
-        figsize=(8, 4)
-    )
-
-    representative_infections = [
-        30,
-        230,
-        390,
-        610,
-        800
-    ]
-
-    # --------------------------
-    # Shade variant periods
-    # --------------------------
-
-    variant_periods = [
-        (0, "Wuhan")
-    ]
-
-    if variant_changes:
-        variant_periods.extend(
-            [
-                (event["day"], event["name"])
-                for event in variant_changes
-            ]
-        )
-
-    variant_periods.append(
-        (1200, "End")
-    )
-
-    colors = [
-        "#d9d9d9",
-        "#c6dbef",
-        "#fcbba1",
-        "#c7e9c0",
-        "#fdd49e"
-    ]
-
-    for idx in range(
-        len(variant_periods) - 1
-    ):
-
-        start_day = variant_periods[idx][0]
-        end_day = variant_periods[idx + 1][0]
-        name = variant_periods[idx][1]
-
-        ax.axvspan(
-            start_day,
-            end_day,
-            alpha=0.15,
-            color=colors[idx % len(colors)]
-        )
-
-        y_variant = initial_ccp_activity * 1.05
-
-        ax.text(
-            (start_day + end_day) / 2,
-            0.1,
-            name,
-            ha="center",
-            va="bottom",
-            fontsize=6,
-            fontweight="bold"
-            )
-        
-        ax.set_ylim(0, initial_ccp_activity * 1.15)
-    # --------------------------
-    # Representative donors
-    # --------------------------
-
-    for infection_day in representative_infections:
-
-        activities = []
-
-        donation_days = build_donation_schedule(
-                infection_day,
-                donations_per_donor,
-                min_donation_interval,
-                donation_window_start,
-                donation_window_end,
-                variant_changes
-            )
-
-        for donation_day in donation_days:
-            if donation_day >= 1200: 
-                continue
-
-            activity = calculate_batch_activity(
-                infection_day,
-                donation_day,
-                initial_ccp_activity,
-                donation_window_start,
-                variant_changes
-            )
-
-            activities.append(
-                activity
-            )
-
-        # connect donations
-        ax.plot(
-            donation_days,
-            activities,
-            "-o",
-            linewidth=1.5,
-            markersize=5,
-            label=f"Infected day {infection_day}"
-        )
-
-        # infection marker
-        ax.axvline(
-            infection_day,
-            color=ax.lines[-1].get_color(),
-            alpha=0.3,
-            linestyle=":"
-        )
-
-        ax.annotate(
-            f"Inf {infection_day}",
-            (
-                infection_day,
-                initial_ccp_activity * 0.05
-            ),
-            rotation=90,
-            fontsize=6,
-            alpha=0.7
-        )
-
-        # donation labels
-        for j, donation_day in enumerate(
-            donation_days
-        ):
-
-            ax.annotate(
-                f"D{j+1}\n{donation_day}",
-                xy=(
-                    donation_day,
-                    activities[j]
-                ),
-                xytext=(0, 8),
-                textcoords="offset points",
-                ha="center",
-                fontsize=3
-            )
-
-        for j in range(len(donation_days) - 1):
-
-            midpoint = (
-                donation_days[j]
-                + donation_days[j+1]
-            ) / 2
-
-            interval = (
-                donation_days[j+1]
-                - donation_days[j]
-            )
-
-            ax.text(
-                midpoint,
-                activities[j] - 0.03,
-                f"{interval}d",
-                ha="center",
-                fontsize=3
-            )
-    # --------------------------
-    # Variant change lines
-    # --------------------------
-
-    if variant_changes:
-
-        for event in variant_changes:
-
-            ax.axvline(
-                event["day"],
-                color="black",
-                alpha=0.4,
-                linestyle="--"
-            )
-
-    ax.set_title(
-        "Donation activity by infection cohort"
-    )
-
-    ax.set_xlabel(
-        "Simulation day"
-    )
-
-    ax.set_ylabel(
-        "CCP activity"
-    )
-
-    ax.set_ylim(
-        0,
-        initial_ccp_activity * 1.1
-    )
-
-    ax.legend(
-        fontsize=7
-    )
-
-    ax.grid(
-        alpha=0.3
-    )
-
-    # --------------------------
-    # Save
-    # --------------------------
-
-    debug_dir = (
-        Path.cwd()
-        / "outputs"
-        / "debug plots"
-    )
-
-    debug_dir.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-    fig.savefig(
-        debug_dir
-        / "batch_activity_mechanism.png",
-        dpi=300,
-        bbox_inches="tight"
-    )
-
-    plt.close(fig)
-
 
 if __name__ == "__main__":     
 
@@ -1878,16 +1708,11 @@ if __name__ == "__main__":
 
     variant_changes = []
 
+    # date in which the variant became dominant (exceded 50% proportion) https://epidata.sciensano.be/epistat/dashboard/#covid_variants
     variant_dates = {
         "Alpha": "2020-12-15",
-        "Delta": "2021-06-15",
-        "Omicron": "2021-12-15"
-    }
-
-    variant_penalties = {
-        "Alpha": 0.3,
-        "Delta": 0.3,
-        "Omicron": 0.3
+        "Delta": "2021-06-30", # previous date I had was "2021-06-15". This new one is from https://epidata.sciensano.be/epistat/dashboard/#covid_variants
+        "Omicron": "2022-01-01" # previous date I had was "2021-12-15" 
     }
 
     for variant, date_str in variant_dates.items():
@@ -1899,8 +1724,7 @@ if __name__ == "__main__":
 
         variant_changes.append({
             "day": day,
-            "name": variant,
-            "penalty": variant_penalties[variant]
+            "name": variant
         })
     
     variant_changes = sorted(
@@ -1918,9 +1742,6 @@ if __name__ == "__main__":
     donation_window_start = 30
     donation_window_end = 180
     min_donation_interval = 14
-
-    # debug_calculate_batch_activity(donation_window_start=donation_window_start, donation_window_end=donation_window_end, min_donation_interval=min_donation_interval , donations_per_donor=3, initial_ccp_activity=0.7, variant_changes=variant_changes)
-
 
 
     # summary = summarize_results(results)

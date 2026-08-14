@@ -24,10 +24,8 @@ df = df.sort_values("DATE")
 
 # Extract aligned series
 dates = df["DATE"]
-H = df["NEW_IN"].values
-I = df["CASES"].values
-# Peak hospitalizations (for normalization)
-H_peak = np.max(H)
+H_ori = df["NEW_IN"].values
+I_ori = df["CASES"].values
 
 variant_changes = []
 
@@ -37,18 +35,24 @@ variant_dates = {
     "Omicron": "2021-12-15"
 }
 
-delay_inf_to_hosp = 7 # 7 days according to cross-correlation between hospitalizations and infections
+for variant, date_str in variant_dates.items():
 
+    day = (
+        pd.Timestamp(date_str)
+        - pd.Timestamp(dates.iloc[0])
+    ).days
+
+    variant_changes.append({
+        "day": day,
+        "name": variant
+    })
+
+delay_inf_to_hosp = 7 # 7 days according to cross-correlation between hospitalizations and infections
 
 #endregion
 
 ## BASIC PARAMETERS (commented)
 #region
-# Effectiveness (scenario)
-# E = 0.25  # % reduction in hospitalization risk
-
-# Assumption - Average delay infection → hospitalization (approx)
-# delay_inf_to_hosp = 7  # days 
 
 ## Supply constants ##
 # From Elise: 3 donations × 500 mL = 1.5 L per donor
@@ -59,43 +63,71 @@ delay_inf_to_hosp = 7 # 7 days according to cross-correlation between hospitaliz
 # treatment: 2 doses/day for 3 months (≈90 days) (so 180 doses per patient)
 # patients_per_donor ≈ 1250 / 180 ≈ 7 people
 
-# donation_volume = 0.5 #500 mL
-# slider with between 100 µL per nostril to 600 µL per nostril - simulation of their volume study
 # dose_volume = 0.0012 # 600 µL per nostril = 1.2 mL per dose 
 # how many donations we consider (1 to 3)
 # donations_per_donor = 1
 # doses_per_patient_per_day = 2
 # treatment_duration = 90  # days
 
-# capacity_per_day = 200  # TEMP placeholder (maximum donations/day)
-
-#TODO: find out
-# this is taking into account new variants and that the antigens keeps changing, but maybe it is too conservative
-# ccp_lifetime = 90  # days plasma remains clinically relevant
-
-# Assumption of donation window:
-#  People can donate in a window between [window_start] and [window_end] days post-infection
-#TODO: FIND OUT
-# window_start = 30
-# window_end = 50
-
 # Donor rate (% of the recovered that actually donate)
 # potential_donor_rate = 0.1  # 10% of recovered donate (in Belgium - Elise was using Flanders)
 # over_titre_donor_rate = 0.2 # 20% of the donors have antibody titres above 20 µg/mL (the threshold used for CP in our hamster study; see the EBioMedicine paper). 
 # This estimate is based on donor data from the Meuri & Confident studies in 2021 (approximately n = 70).
 
-## Adoption constants
-# A_max = 1  # max 50% adoption
-# Timing
-# t_start = 60   # days after start
-# T_rollout = 200  # days to reach max
-
-
-
 #endregion
 
 ## FUNCTIONS
 #region
+def add_variant_lines(ax, start_date, variant_changes):
+    """
+    Draw vertical lines marking variant transitions.
+    """
+
+    # Wuhan dominance starts at simulation start
+    ax.axvline(
+        start_date,
+        color="black",
+        linestyle=":",
+        linewidth=0.7,
+        alpha=0.5
+    )
+
+    ymax = ax.get_ylim()[1]
+
+    ax.text(
+        start_date,
+        ymax * 0.95,
+        "Wuhan",
+        rotation=90,
+        va="top",
+        fontsize=5,
+        alpha=0.5
+    )
+
+    for event in variant_changes:
+
+        transition_date = (
+            start_date
+            + pd.Timedelta(days=event["day"])
+        )
+
+        ax.axvline(
+            transition_date,
+            color="black",
+            linestyle=":",
+            linewidth=0.7,
+            alpha=0.5
+        )
+
+        ax.text(
+            transition_date,
+            ymax * 0.95,
+            event["name"],
+            rotation=90,
+            va="top",
+            fontsize=5,
+            alpha=0.5
+        )
 
 def format_axes(ax):
 
@@ -371,12 +403,117 @@ def plot_tornado(
 st.title(
     "Intranasal CCP Prophylaxis Model"
 )
-tab_model, tab_sensitivity = st.tabs(
+tab_pandemic, tab_model, tab_sensitivity = st.tabs(
     [
+        "Pandemic",
         "Model",
         "Sensitivity"
     ]
 )
+
+with tab_pandemic:
+    # change the pandemic here (infections, hospitalizations, variant appearance and cross-neutralization can also be here)
+    st.header("Pandemic scenario")
+    st.subheader("(relative to observed COVID-19 pandemic in Belgium)")
+    infection_multiplier = st.slider(
+        "Infection multiplier",
+        min_value=1.0,
+        max_value=10.0,
+        value=1.0,
+        step=0.5
+    )
+    hospitalization_multiplier = st.slider(
+        "Hospitalization multiplier (severity - hospitalization risk of respiratory pandemic).",
+        min_value=1.0,
+        max_value=10.0,
+        value=1.0,
+        step=0.5
+    )
+
+    I = (
+        infection_multiplier
+        * I_ori
+    )
+
+    hospitalization_rate = H_ori / I_ori
+
+    H = (
+        I
+        * hospitalization_multiplier
+        * hospitalization_rate
+    )
+
+    # PLOTS
+    #region
+    show_covid = st.toggle(
+    "Show COVID-19",
+    value=True)
+    fig, ax = plt.subplots(figsize=(6, 3))
+    # Infections 
+    ax.plot(
+        dates,
+        I,
+        label="Simulated pandemic",
+        color="black",
+        linewidth=1
+    )
+    ax.set_ylabel(
+        "New infections/day"
+    )
+    if show_covid:       
+        ax.plot(
+            dates,
+            I_ori,
+            label="COVID-19",
+            color="red",
+            linewidth=1,
+            alpha=0.8
+        )
+
+    # Combine legends
+    ax.legend(loc='center right', fontsize=7)
+    ax.grid()
+    add_variant_lines(
+            ax,
+            dates[0],
+            variant_changes
+        )
+    format_axes(ax)
+    st.pyplot(fig, width="stretch")
+
+    fig, ax = plt.subplots(figsize=(6, 3))
+    # Hospitalizations 
+    ax.plot(
+        dates,
+        H,
+        label="Simulated pandemic",
+        color="black",
+        linewidth=1
+    )
+    ax.set_ylabel(
+        "Hospital admissions/day"
+    )
+    if show_covid:       
+        ax.plot(
+            dates,
+            H_ori,
+            label="COVID-19",
+            color="red",
+            linewidth=1,
+            alpha=0.8
+        )
+    # Combine legends
+    ax.legend(loc='center right', fontsize=7)
+    ax.grid()
+    add_variant_lines(
+            ax,
+            dates[0],
+            variant_changes
+        )
+    format_axes(ax)
+    st.pyplot(fig, width="stretch")
+    #endregion
+
 
 with tab_model:
     ## SIDEBAR
@@ -412,29 +549,13 @@ with tab_model:
         step=0.001,
         format="%0.3f"
     )
-
-    st.sidebar.caption("COVID variant activity penalties (one-time additional decay)")
-    alpha = float(st.sidebar.text_input("alpha", 0.3))
-    delta = float(st.sidebar.text_input("delta", 0.3))
-    omicron = float(st.sidebar.text_input("omicron", 0.3))
-    variant_penalties = {
-        "Alpha": alpha,
-        "Delta": delta,
-        "Omicron": omicron
-    }
-
-    for variant, date_str in variant_dates.items():
-
-        day = (
-            pd.Timestamp(date_str)
-            - pd.Timestamp(dates.iloc[0])
-        ).days
-
-        variant_changes.append({
-            "day": day,
-            "name": variant,
-            "penalty": variant_penalties[variant]
-        })
+    max_storage_age = st.sidebar.slider(
+        "Max storage age",
+        min_value=90,
+        max_value=500,
+        value=365,
+        step=5
+    )
 
     # ---------
     st.sidebar.subheader(
@@ -515,6 +636,7 @@ with tab_model:
         initial_ccp_activity = initial_ccp_activity,
         high_risk_use_threshold = high_risk_use_threshold,
         minimum_usable_activity = minimum_usable_activity,
+        max_storage_age = max_storage_age,
         A_max=A_max,
         capacity_per_day=capacity_per_day,
         treatment_duration=treatment_duration,
@@ -546,18 +668,26 @@ with tab_model:
     Biological activity of newly produced CCP at the time of collection.
     - 0.70 = newly collected plasma starts at 70% activity
 
-    Activity only changes when variant transitions occur and reduce the effectiveness of plasma generated from earlier infections.  
+    Activity at collection represents the baseline biological activity of the plasma unit. 
+    
+    Activity is subsequently adjusted according to the degree of cross-neutralization between the donor infection variant and the dominant circulating variant at the projected end of treatment.
 
     ---
 
     ### Infection-to-hospitalization delay - 7 days (fixed)
-    Average delay between infection and potential hospitalization. Coverage is shifted forward by this number of days when estimating effects on hospital admissions.
+    Average delay between infection and potential hospitalization. 
+    
+    Coverage is shifted forward by this number of days when estimating effects on hospital admissions.
+    
     This was estimated by cross-correlation between the infections and hospitalizations.
 
     ---
 
     ### Activity threshold for high-risk usage
     Minimum projected (at the end of treatment) activity required for CCP to be allocated to the high-risk population.
+    
+    Projected activity is determined by applying the variant-specific cross-neutralization coefficient between the donor infection variant and the dominant circulating variant expected at treatment completion.
+
     - 0.50 = plasma projected to retain at least 50% activity at the last day of treatment is reserved for high-risk individuals.
 
     
@@ -565,21 +695,30 @@ with tab_model:
 
     ### CCP expiry activity
     Minimum projected end-of-treatment activity required for plasma to remain usable.
+   
     Plasma is discarded when its projected activity at the end of a newly initiated treatment falls below this threshold.
 
     - 0.05 = CCP expected to retain less than 5% activity by the end of treatment is not allocated to new patients.
 
     ---
 
-    ### Variant activity penalties
-    One-time reductions in CCP activity applied to the stock so far when a new variant becomes dominant.
-    A penalty is applied whenever a variant becomes dominant between:
-    - donor infection and plasma collection, or
-    - treatment initiation and treatment completion.
-                    
-    Example:
-    - Penalty = 0.30
-    - Activity = 0.70 → 0.49
+    ### Variant cross-neutralization matrix
+    Variant-specific effectiveness coefficients describing how well plasma generated from infection with one variant is expected to neutralize a different dominant variant at treatment completion.
+    
+    The matrix is based on published reductions in neutralization titres observed between SARS-CoV-2 variants:
+    
+    Sullivan, David J., et al. "Analysis of anti-SARS-CoV-2 Omicron-neutralizing antibody titers in different vaccinated and unvaccinated convalescent plasma sources." Nature Communications 13.1 (2022): 6478.
+    
+    Dupont, Liane, et al. "Neutralizing antibody activity in convalescent sera from infection in humans with SARS-CoV-2 and variants of concern." Nature microbiology 6.11 (2021): 1433-1442.
+    
+    |                |     Wuhan    |     Alpha    |     Delta    |     Omicron    |
+    |----------------|--------------|--------------|--------------|----------------|
+    |     Wuhan      |     1        |     0.66     |     0.79     |     0.22       |
+    |     Alpha      |     x        |     1        |     0.67     |     0.14       |
+    |     Delta      |     x        |     x        |     1        |     0.30       |
+    |     Omicron    |     x        |     x        |     x        |     1          |
+
+    Projected treatment activity is calculated as collection activity * cross-neutralization coefficient.
 
     --- 
                                                 
@@ -621,6 +760,7 @@ with tab_model:
     ### Over-titre threshold donor rate
     Fraction of donors whose plasma meets the antibody titre threshold required for use. \n
     Info: 20% of the donors have antibody titres above 20 µg/mL (the threshold used for CP in hamster study; see the EBioMedicine paper). 
+    
     This estimate is based on donor data from the Meuri & Confident studies in 2021 (approximately n = 70).
                     
     The effective donor rate is, then:
@@ -630,7 +770,7 @@ with tab_model:
     ---
 
     ### Window start
-    Earliest time after infection at which donation becomes possible and the date of the first donation.
+    Earliest time after infection at which donation becomes possible and the date of the first donation. \n
     Example:
     - 30 = donation possible beginning 30 days after infection
                     
@@ -645,8 +785,8 @@ with tab_model:
     ---
 
     ### Minimum donation interval 
-    Minimum time allowed between two donations from the same donor.
-    Defaults to 14 days.
+    Minimum time allowed between two donations from the same donor. \n    
+    Defaults to 14 days. \n   
     When a variant transition is approaching, donations may be moved closer together to this min interval in order to collect plasma before activity is affected.
 
     ---
@@ -654,7 +794,7 @@ with tab_model:
     ## Operational / Supply Chain Parameters
 
     ### Donation volume
-    Amount of plasma collected during a single donation.
+    Amount of plasma collected during a single donation. \n
     Current default:
     - 0.6 L (600 mL)
                     
@@ -663,15 +803,18 @@ with tab_model:
     ---
 
     ### Donations per donor
-    Number of donations obtained from each donor.
-    The collection schedule is optimized to maximize spacing between donations while preserving as many donations as possible before the next variant transition.
+    Number of donations obtained from each donor. \n
+    The collection schedule is optimized to maximize spacing between donations while preserving as many donations as possible before the next anticipated variant-dominance transition. 
+    
+    This represents anticipatory collection efforts to obtain plasma before a decline in expected cross-variant effectiveness.
+    
     A value of 1 corresponds to a single collection 30 days after infection. Defaults to 3.
                     
     ---
 
     ### Maximum donations per day
-    Operational collection capacity.
-    Represents the maximum number of plasma donations that can be processed each day.
+    Operational collection capacity. \n
+    Represents the maximum number of plasma donations that can be processed each day. \n
     If donor availability (from infections) exceeds this limit, capacity becomes the bottleneck.
                     
     ---
@@ -680,13 +823,13 @@ with tab_model:
     Stored plasma is classified into:
 
     High-risk stock
-    - Activity above the high-risk threshold.
+    - Projected end-of-treatment activity above the high-risk threshold.
 
     General-use stock
-    - Activity between the high-risk threshold and expiry activity.
+    - Projected end-of-treatment activity between the high-risk threshold and expiry activity.
 
     Expired stock
-    - Activity below the expiry threshold and removed from inventory.
+    - Projected end-of-treatment activity below the expiry threshold and removed from inventory.
                     
     ---
 
@@ -701,13 +844,13 @@ with tab_model:
     ---
 
     ### Start time
-    Time (days after model start) when prophylaxis becomes available.
+    Time (days after model start) when prophylaxis becomes available. \n
     Before this date, adoption is assumed to be zero.
                     
     ---
 
     ### Rollout time
-    Time required to reach maximum adoption.
+    Time required to reach maximum adoption. \n
     Longer rollout periods delay uptake and reduce early population impact.
                     
     ---
@@ -727,7 +870,7 @@ with tab_model:
     Activity-adjusted coverage.
 
     Effective coverage =
-    coverage × treatment activity
+    coverage × treatment activity \n
 
     This quantity is used to estimate hospitalization reduction.
 
@@ -749,7 +892,8 @@ with tab_model:
     ---
 
     ### End-of-treatment activity
-    Average activity expected at completion of treatment among patients starting treatment on a given day.
+    Average activity expected at completion of treatment among patients starting treatment on a given day. \n
+    This value depends on the donor infection variant, the dominant circulating variant expected at treatment completion, and the corresponding cross-neutralization coefficient.
 
                         
     """)
@@ -765,7 +909,7 @@ with tab_model:
     with col1:
         st.metric(
             "Prevented hospitalizations",
-            f"{np.sum(results['H_prevented']):,.0f}"
+            f"{np.sum(results['H_prevented']):,.0f}/{np.sum(H):,.0f}"
         )
 
     with col2:
@@ -883,6 +1027,11 @@ with tab_model:
     ax.legend(fontsize=7)
     ax.grid()
     ax.set_title("Operational flows")
+    add_variant_lines(
+        ax,
+        dates[0],
+        variant_changes
+    )
     format_axes(ax)
     st.pyplot(fig, width="stretch")
 
@@ -895,6 +1044,11 @@ with tab_model:
     ax.set_title("Inventory")
     ax.legend(fontsize=7)
     ax.grid()
+    add_variant_lines(
+        ax,
+        dates[0],
+        variant_changes
+    )    
     format_axes(ax)
     st.pyplot(fig, width="stretch")
 
@@ -918,6 +1072,11 @@ with tab_model:
     ax.grid()
     ax.set_title("High-risk: demand and delivery")
     format_axes(ax)
+    add_variant_lines(
+        ax,
+        dates[0],
+        variant_changes
+    )
     st.pyplot(fig, width="stretch")
 
     # Demand and treated (general)
@@ -939,6 +1098,11 @@ with tab_model:
     ax.legend(fontsize=7)
     ax.grid()
     ax.set_title("General population: demand and delivery")
+    add_variant_lines(
+        ax,
+        dates[0],
+        variant_changes
+    )
     format_axes(ax)
     st.pyplot(fig, width="stretch")
 
@@ -988,6 +1152,12 @@ with tab_model:
             "Omicron high-risk",
             "Omicron general"
         ]
+    )
+
+    add_variant_lines(
+        ax,
+        dates[0],
+        variant_changes
     )
 
     ax.set_ylabel("Treatment courses")
@@ -1072,6 +1242,11 @@ with tab_model:
     ax.set_title("Coverage, efficacy and adoption", pad=25)
     ax.legend(ncol=4, fontsize=5, loc='upper center', bbox_to_anchor=(0.5, 1.15))
     ax.grid()
+    add_variant_lines(
+        ax,
+        dates[0],
+        variant_changes
+    )
     format_axes(ax)
     st.pyplot(fig, width="stretch")
 
@@ -1197,10 +1372,9 @@ with tab_sensitivity:
     st.subheader("Sensitivity Analysis")
 
     parameters_dict = {
-                        "Initial CCP activity": [0.1, 1.00],
-                        "Minimum usable activity": [0.01, 0.1],
+                        "High-risk usage activity threshold": [0.1, 0.6],
+                        "Max storage age": [90, 500],
                         "Dose volume per nostril": [100, 600],
-                        "Potential donor rate": [0.01, 1.00],
                         "Donations per donor": [1, 10],
                         "Maximum donations/day": [1, 450],
                         "Maximum adoption": [0.01, 1.00],
@@ -1214,7 +1388,7 @@ with tab_sensitivity:
     )
 
     # Sensitivity plots
-    n_points = 50
+    n_points = 20
     ranges = {
         parameter:
             np.arange(int(low), int(high))
@@ -1228,32 +1402,24 @@ with tab_sensitivity:
     prevented = []
     for value in x_values:
 
-        test_initial_ccp_activity = initial_ccp_activity
         test_high_risk_use_threshold = high_risk_use_threshold
-        test_minimum_usable_activity = minimum_usable_activity
+        test_max_storage_age = max_storage_age
         test_dose = dose_volume
-        test_potential_donor_rate = potential_donor_rate
         test_donations_per_donor = donations_per_donor
         test_capacity = capacity_per_day
         test_A_max = A_max
         test_t_start = t_start
         test_rollout = T_rollout
 
-        if parameter == "Initial CCP activity":
-            test_initial_ccp_activity = value
-        
-        elif parameter == "Minimum usable activity":
-            test_minimum_usable_activity = value
-
-        elif parameter == "High risk use threshold":
+        if parameter == "High-risk usage activity threshold":
             test_high_risk_use_threshold = value
+
+        elif parameter == "Max storage age":
+            test_max_storage_age = int(value)
 
         elif parameter == "Dose volume per nostril":
             # Convert µL per nostril to model units (L total dose)
             test_dose = value / 500000
-
-        elif parameter == "Potential donor rate":
-            test_potential_donor_rate = value
 
         elif parameter == "Donations per donor":
             test_donations_per_donor = int(value)
@@ -1274,13 +1440,14 @@ with tab_sensitivity:
             H,
             I,
             variant_changes,
-            initial_ccp_activity=test_initial_ccp_activity,
-            high_risk_use_threshold=test_high_risk_use_threshold,
-            minimum_usable_activity=test_minimum_usable_activity,
-            A_max=test_A_max,
-            capacity_per_day=test_capacity,
+            initial_ccp_activity=initial_ccp_activity,
+            high_risk_use_threshold=test_high_risk_use_threshold, #
+            minimum_usable_activity=minimum_usable_activity,
+            max_storage_age=test_max_storage_age, #
+            A_max=test_A_max, #
+            capacity_per_day=test_capacity, #
             treatment_duration=treatment_duration,
-            potential_donor_rate=test_potential_donor_rate,
+            potential_donor_rate=potential_donor_rate,
             over_titre_donor_rate=over_titre_donor_rate,
             doses_per_patient_per_day=doses_per_patient_per_day,
             donation_volume=donation_volume,
