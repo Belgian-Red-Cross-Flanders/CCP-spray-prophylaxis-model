@@ -471,7 +471,7 @@ with tab_pandemic:
         )
 
     # Combine legends
-    ax.legend(loc='center right', fontsize=7)
+    ax.legend(loc='upper right', fontsize=7)
     ax.grid()
     add_variant_lines(
             ax,
@@ -503,7 +503,7 @@ with tab_pandemic:
             alpha=0.8
         )
     # Combine legends
-    ax.legend(loc='center right', fontsize=7)
+    ax.legend(loc='upper right', fontsize=7)
     ax.grid()
     add_variant_lines(
             ax,
