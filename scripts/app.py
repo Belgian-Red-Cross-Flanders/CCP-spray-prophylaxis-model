@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+from matplotlib.ticker import FuncFormatter
 
 from model_hospitalization import run_model, summarize_results
 
@@ -128,6 +129,14 @@ def add_variant_lines(ax, start_date, variant_changes):
             fontsize=5,
             alpha=0.5
         )
+def smart_format(x, pos):
+    if abs(x) >= 1000:
+        return f"{x:,.0f}"
+    elif (abs(x) >= 1) or (abs(x) == 0):
+        return f"{x:.0f}"
+    else:
+        return f"{x:.2f}"
+
 
 def format_axes(ax):
 
@@ -160,6 +169,10 @@ def format_axes(ax):
     # Axis labels
     ax.xaxis.label.set_size(7)
     ax.yaxis.label.set_size(7)
+
+    ax.yaxis.set_major_formatter(
+        FuncFormatter(smart_format)
+    )
 
     # Title
     ax.title.set_size(8)
@@ -992,31 +1005,277 @@ with tab_model:
     format_axes(ax2)
     st.pyplot(fig, width="stretch")
 
-    # Cumulative prevented
+    # Cumulative hospitalizations
     fig, ax = plt.subplots(figsize=(6, 3))
-    cumulative_prevented = np.cumsum(results["H_prevented"])
+
+    # cumulative baseline hospitalizations
+    cum_hosp = np.cumsum(H)
+
+    # cumulative with CCP
+    cum_hosp_ccp = np.cumsum(
+        H - results["H_prevented"]
+    )
+
+    # plot lines
     ax.plot(
         dates,
-        cumulative_prevented,
+        cum_hosp,
         color="black",
-        linewidth=2
-        # label="Cumulative hospitalizations prevented"
+        linewidth=2,
+        label="Actual (no program)"
     )
+
+    ax.plot(
+        dates,
+        cum_hosp_ccp,
+        color="tab:blue",
+        linewidth=2,
+        label="With CCP prophylaxis"
+    )
+
+    # shaded prevented area
+    ax.fill_between(
+        dates,
+        cum_hosp_ccp,
+        cum_hosp,
+        color="red",
+        alpha=0.25
+    )
+
+    # numbers
+    total_hosp = np.sum(H)
     total_prevented = np.sum(results["H_prevented"])
+    pct_prevented = (
+        100 * total_prevented / total_hosp
+    )
+
+    # annotation
     ax.text(
-        0.03,
-        0.96,
-        f"Prevented: {total_prevented:,.0f}",
+        0.78,
+        0.65,
+        f"Total prevented:\n"
+        f"{total_prevented:,.0f}\n"
+        f"({pct_prevented:.1f}%)",
         transform=ax.transAxes,
-        verticalalignment="top",
-        bbox=dict(facecolor="white", alpha=0.8),
+        ha="left",
+        va="center",
+        fontsize=5,
+        bbox=dict(
+            facecolor="white",
+            alpha=0.9
+        )
+    )
+
+    ax.set_ylabel(
+        "Cumulative hospitalizations"
+    )
+
+    ax.set_title(
+        "Cumulative hospitalizations with and without i.n. CCP"
+    )
+
+    ax.legend(fontsize=7)
+    ax.grid()
+
+    format_axes(ax)
+
+    st.pyplot(fig, width="stretch")
+
+    # Hospitalizations by variant period
+    # Define variant periods
+    period_names = ["Wuhan"]
+    period_starts = [dates.iloc[0]]
+    for event in variant_changes:
+        period_names.append(event["name"])
+        period_starts.append(
+            dates.iloc[0] + pd.Timedelta(days=event["day"])
+        )
+    period_starts.append(dates.iloc[-1])
+    # Aggregate
+    realized = []
+    prevented = []
+    for i in range(len(period_names)):
+        start = period_starts[i]
+        end = period_starts[i + 1]
+        mask = (
+            (dates >= start)
+            &
+            (dates < end)
+        )
+        realized.append(
+            np.sum(results["H_ccp"][mask])
+        )
+        prevented.append(
+            np.sum(results["H_prevented"][mask])
+        )
+    # Plot
+    fig, ax = plt.subplots(figsize=(6, 3))
+    x = np.arange(len(period_names))
+    # realized hospitalizations
+    ax.bar(
+        x,
+        realized,
+        color="steelblue",
+        label="Hospitalizations with CCP"
+    )
+    # prevented hospitalizations
+    ax.bar(
+        x,
+        prevented,
+        bottom=realized,
+        color="red",
+        alpha=0.8,
+        label="Prevented hospitalizations"
+    )
+    # annotate prevented numbers
+    for i in range(len(period_names)):
+        if prevented[i] > 0:
+            ax.text(
+                x[i],
+                realized[i] + prevented[i] * 0.5,
+                f"{prevented[i]:,.0f}",
+                ha="center",
+                va="center",
+                fontsize=6,
+                color="white"
+            )
+    ax.set_xticks(x)
+    ax.set_xticklabels(period_names)
+    ax.tick_params(
+        axis="both",
+        labelsize=6
+    )
+    ax.set_ylabel(
+        "Hospitalizations",
+        fontsize=8
+    )
+    ax.set_title(
+        "Hospitalizations prevented by variant period",
+        fontsize=8
+    )
+    ax.legend(
         fontsize=6
     )
-    ax.set_ylabel("Cumulative hospitalizations prevented")
-    ax.set_title("Hospital admissions prevented through i.n. CCP")
-    ax.grid()
-    format_axes(ax)
+    ax.grid(
+        axis="y"
+    )
+    ax.yaxis.set_major_formatter(
+            FuncFormatter(smart_format)
+        )
+    plt.tight_layout()
+    st.pyplot(
+        fig,
+        width="stretch"
+    )
+
+    # Waterfall plot
+    fig, ax = plt.subplots(figsize=(6,3))
+    total_hosp = np.sum(H)
+    total_prevented = np.sum(results["H_prevented"])
+    remaining = total_hosp - total_prevented
+    labels = [
+        "Expected\n(no CCP)",
+        "Prevented",
+        "Remaining\n(with CCP)"
+    ]
+    # positions
+    x = np.arange(3)
+    # first bar
+    ax.bar(
+        x[0],
+        total_hosp,
+        color="black"
+    )
+    # prevented bar (negative)
+    ax.bar(
+        x[1],
+        -total_prevented,
+        bottom=total_hosp,
+        color="red"
+    )
+    # final bar
+    ax.bar(
+        x[2],
+        remaining,
+        color="tab:blue"
+    )
+    # connector lines
+    ax.plot(
+        [x[0], x[1]],
+        [total_hosp, total_hosp],
+        color="gray",
+        linestyle="--"
+    )
+    ax.plot(
+        [x[1], x[2]],
+        [remaining, remaining],
+        color="gray",
+        linestyle="--"
+    )
+    # annotations
+    ax.text(
+        x[0],
+        total_hosp + 5000,
+        f"{total_hosp:,.0f}",
+        ha="center",
+        fontsize=7
+    )
+    ax.text(
+        x[1],
+        total_hosp - total_prevented/2,
+        f"-{total_prevented:,.0f}",
+        ha="center",
+        va="center",
+        fontsize=7,
+        color="white"
+    )
+    ax.text(
+        x[2],
+        remaining + 5000,
+        f"{remaining:,.0f}",
+        ha="center",
+        fontsize=7
+    )
+    pct = (
+        100
+        * total_prevented
+        / total_hosp
+    )
+    ax.text(
+        0.98,
+        0.95,
+        f"{pct:.1f}% reduction",
+        transform=ax.transAxes,
+        ha="right",
+        va="top",
+        bbox=dict(
+            facecolor="white",
+            alpha=0.9
+        ),
+        fontsize=7
+    )
+    ax.set_ylim(0, 1.25*total_hosp)
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, fontsize=7)
+    ax.set_ylabel(
+        "Hospitalizations", 
+        fontsize=8
+    )
+    ax.tick_params(
+        axis="both",
+        labelsize=6
+    )
+    ax.set_title(
+        "Impact of intranasal CCP prophylaxis", 
+        fontsize=8
+    )
+    ax.yaxis.set_major_formatter(
+        FuncFormatter(smart_format)
+    )
+    ax.grid(axis="y")
+    plt.tight_layout()
     st.pyplot(fig, width="stretch")
+
 
     # Flows (produced, delivered, discarded)
     fig, ax = plt.subplots(figsize=(6, 3))
@@ -1382,7 +1641,7 @@ with tab_model:
 with tab_sensitivity:
     st.subheader("Sensitivity Analysis")
 
-    parameters_dict = {
+    parameters_dict = { "Potential donor rate": [0.01, 1.0],
                         "High-risk usage activity threshold": [0.1, 0.6],
                         "Max storage age": [90, 500],
                         "Dose volume per nostril": [100, 600],
@@ -1411,8 +1670,10 @@ with tab_sensitivity:
     }
     x_values = ranges[parameter]
     prevented = []
+    general = []
     for value in x_values:
 
+        test_potential_donor_rate = potential_donor_rate
         test_high_risk_use_threshold = high_risk_use_threshold
         test_max_storage_age = max_storage_age
         test_dose = dose_volume
@@ -1422,7 +1683,10 @@ with tab_sensitivity:
         test_t_start = t_start
         test_rollout = T_rollout
 
-        if parameter == "High-risk usage activity threshold":
+        if parameter == "Potential donor rate":
+            test_potential_donor_rate = value
+
+        elif parameter == "High-risk usage activity threshold":
             test_high_risk_use_threshold = value
 
         elif parameter == "Max storage age":
@@ -1458,7 +1722,7 @@ with tab_sensitivity:
             A_max=test_A_max, #
             capacity_per_day=test_capacity, #
             treatment_duration=treatment_duration,
-            potential_donor_rate=potential_donor_rate,
+            potential_donor_rate=test_potential_donor_rate,
             over_titre_donor_rate=over_titre_donor_rate,
             doses_per_patient_per_day=doses_per_patient_per_day,
             donation_volume=donation_volume,
@@ -1475,6 +1739,7 @@ with tab_sensitivity:
         prevented.append(
             np.sum(results_sens["H_prevented"])
         )
+        general.append(np.sum(results_sens["general_patients"]))
 
         
     fig, ax = plt.subplots(figsize=(6, 3))
@@ -1493,6 +1758,24 @@ with tab_sensitivity:
 
     ax.set_title(
         f"Sensitivity to {parameter}"
+    )
+
+    ax.grid(True)
+
+    st.pyplot(fig, width="stretch")
+
+    fig, ax = plt.subplots(figsize=(6, 3))
+
+    ax.plot(
+        x_values,
+        general,
+        marker="o"
+    )
+
+    ax.set_xlabel(parameter)
+
+    ax.set_ylabel(
+        "Total general population reached"
     )
 
     ax.grid(True)
