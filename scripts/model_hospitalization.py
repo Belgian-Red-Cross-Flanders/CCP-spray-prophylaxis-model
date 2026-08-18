@@ -1112,13 +1112,17 @@ def run_model(
     )
 
     daily_doses = np.zeros(n_days)
-
+    daily_donations = np.zeros(n_days)
     for day in range(n_days):
 
         daily_doses[day] = sum(
             batch["doses"]
             for batch in daily_batches[day]
         )
+        daily_donations[day] = sum(
+                    batch["donors"]
+                    for batch in daily_batches[day]
+                )
 
 
     high_risk_population, general_population = calculate_populations(
@@ -1138,6 +1142,8 @@ def run_model(
     general_demand_series = np.zeros_like(H, dtype=float) 
     reserved_doses_series = np.zeros_like(H, dtype=float)
     discarded_doses = np.zeros_like(H, dtype=float)
+    reserved_doses_series_high_risk = np.zeros_like(H, dtype=float)
+    reserved_doses_series_general = np.zeros_like(H, dtype=float)
     high_risk_treatment_efficacy_series = np.zeros_like(H, dtype=float)
     general_treatment_efficacy_series = np.zeros_like(H, dtype=float)
     effective_coverage = np.zeros_like(H, dtype=float)
@@ -1300,6 +1306,8 @@ def run_model(
                 + general_reserved
             )
 
+        reserved_doses_series_high_risk[i] = high_risk_reserved
+        reserved_doses_series_general[i] = general_reserved
 
     # Shift coverage forward
     C_effective = np.roll(
@@ -1324,11 +1332,19 @@ def run_model(
     H_prevented = H - H_ccp
     H_reduction_pct = (H - H_ccp) / np.maximum(H, 1) * 100
 
+    # Doses remaining at the end of the simulation
+    remaining_doses = sum(
+    batch["doses"]
+    for batch in inventory
+    )
+
     return {
         # Epidemiological trajectories
         "H_ccp": H_ccp,
         "H_prevented": H_prevented,
         "H_reduction_pct": H_reduction_pct,
+
+        "daily_donations": daily_donations,
 
         # Demand/adoption
         "adoption": adoption,
@@ -1351,7 +1367,10 @@ def run_model(
         "stock": stock,
         "daily_production": daily_doses,
         "daily_reserved_doses": reserved_doses_series,
+        "daily_reserved_doses_high_risk": reserved_doses_series_high_risk,
+        "daily_reserved_doses_general": reserved_doses_series_general,
         "discarded_doses": discarded_doses,
+        "remaining_doses": remaining_doses,
         "high_risk_stock": high_risk_stock_series,
         "general_stock": general_stock_series,
         **variant_series,
@@ -1366,6 +1385,7 @@ def run_model(
         "supply_limited": supply_limited,
 
         # Constants needed later
+        "donations_per_donor": donations_per_donor,
         "doses_per_treatment": doses_per_treatment,
         "treatments_per_donor": treatments_per_donor
     }
@@ -1373,12 +1393,28 @@ def run_model(
 def summarize_results(results):
 
     return {
+        "total_donations": np.sum(
+            results["daily_donations"]
+        ),
+
+        "total_donors": np.sum(
+            results["daily_donations"]/results["donations_per_donor"]
+        ),
+
         "total_produced": np.sum(
             results["daily_production"]
         ),
 
         "total_delivered": np.sum(
             results["daily_reserved_doses"]
+        ),
+
+        "total_delivered_high_risk": np.sum(
+            results["daily_reserved_doses_high_risk"]
+        ),
+
+        "total_delivered_general": np.sum(
+            results["daily_reserved_doses_general"]
         ),
 
         "total_discarded": np.sum(

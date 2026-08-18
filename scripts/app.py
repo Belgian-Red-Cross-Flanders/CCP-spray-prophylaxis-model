@@ -923,7 +923,7 @@ with tab_model:
     with col3:
         st.metric(
             "Average hospitalizations prevented",
-            f"{100*summary['average_effective_coverage']:.1f}%"
+            f"{100*np.sum(results['H_prevented'])/np.sum(H):.1f}%"
         )
 
     with col4:
@@ -1310,9 +1310,14 @@ with tab_model:
 
     report = pd.DataFrame({
         "Metric": [
+            "Total number of donors",
+            "Total number of donations",
             "Total treatment courses produced",
             "Total treatment courses delivered",
-            "Total treatment courses discarded",
+            "Total treatment courses delivered (high-risk)",
+            "Total treatment courses delivered (general)",
+            "Total treatment courses discarded (expiry/low activity)",
+            "Remaining treatment courses at end of simulation",
             "Average inventory",
             "Peak inventory",
             "Peak high-risk inventory",
@@ -1328,11 +1333,17 @@ with tab_model:
             "Maximum daily hospitalization reduction"
         ],
         "Value": [
+            f"{summary['total_donors']:,.0f}",
+            f"{summary['total_donations']:,.0f}",
             f"{summary['total_produced'] / doses_per_treatment:,.0f}",
 
             f"{summary['total_delivered'] / doses_per_treatment:,.0f}",
+            f"{summary['total_delivered_high_risk'] / doses_per_treatment:,.0f}",
+            f"{summary['total_delivered_general'] / doses_per_treatment:,.0f}",
 
             f"{summary['total_discarded'] / doses_per_treatment:,.0f}",
+
+            f"{results['remaining_doses'] / doses_per_treatment:,.0f}",
 
             f"{summary['average_stock'] / doses_per_treatment:,.0f} treatment courses",
 
