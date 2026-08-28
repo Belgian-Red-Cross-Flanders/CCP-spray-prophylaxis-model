@@ -18,6 +18,242 @@ debug_dir.mkdir(
 )
 
 
+def debug_donation_schedule(
+    donation_window_start,
+    donation_window_end,
+    min_donation_interval,
+    donations_per_donor,
+    initial_ccp_activity,
+    variant_changes,
+    cross_neutralization,
+    high_risk_threshold=0.40,
+    minimum_usable_activity=0.05
+):
+
+    fig, ax = plt.subplots(
+        figsize=(10, 5)
+    )
+
+    representative_infections = [
+        30,   # Wuhan early
+        230,  # Wuhan late
+        390,  # Alpha
+        610,  # Delta
+        800   # Omicron
+    ]
+
+    # --------------------------------------------------
+    # Variant periods
+    # --------------------------------------------------
+
+    variant_periods = [(0, "Wuhan")]
+
+    variant_periods.extend(
+        [
+            (event["day"], event["name"])
+            for event in variant_changes
+        ]
+    )
+
+    simulation_end = 1200
+    variant_periods.append(
+        (simulation_end, "End")
+    )
+
+    colors = [
+        "#d9d9d9",
+        "#c6dbef",
+        "#fcbba1",
+        "#c7e9c0",
+        "#fdd49e"
+    ]
+
+    for idx in range(
+        len(variant_periods) - 1
+    ):
+
+        start_day = variant_periods[idx][0]
+        end_day = variant_periods[idx + 1][0]
+
+        ax.axvspan(
+            start_day,
+            end_day,
+            alpha=0.15,
+            color=colors[idx % len(colors)]
+        )
+
+        ax.text(
+            (start_day + end_day) / 2,
+            0.03,
+            variant_periods[idx][1],
+            ha="center",
+            fontsize=8,
+            fontweight="bold"
+        )
+
+    # --------------------------------------------------
+    # Example donors
+    # --------------------------------------------------
+
+    donor_colors = {
+        "Wuhan": "tab:blue",
+        "Alpha": "tab:orange",
+        "Delta": "tab:red",
+        "Omicron": "tab:purple"
+    }
+
+    for infection_day in representative_infections:
+
+        donor_variant = get_variant(
+            variant_changes,
+            infection_day
+        )
+
+        donation_days = build_donation_schedule(
+            infection_day,
+            donations_per_donor,
+            min_donation_interval,
+            donation_window_start,
+            donation_window_end,
+            variant_changes
+        )
+
+        activities = []
+
+        for donation_day in donation_days:
+
+            treatment_end_day = (
+                donation_day
+                + 90
+            )
+
+            target_variant = get_variant(
+                variant_changes,
+                treatment_end_day
+            )
+
+            multiplier = (
+                cross_neutralization
+                .get(donor_variant, {})
+                .get(target_variant, 1.0)
+            )
+
+            projected_activity = (
+                initial_ccp_activity
+                * multiplier
+            )
+
+            activities.append(
+                projected_activity
+            )
+
+        ax.plot(
+            donation_days,
+            activities,
+            "-o",
+            linewidth=2,
+            label=(
+                f"{donor_variant} donor "
+                f"(infection day {infection_day})"
+            ),
+            color=donor_colors.get(
+                donor_variant,
+                "black"
+            )
+        )
+
+        # infection marker
+        ax.scatter(
+            infection_day,
+            initial_ccp_activity,
+            marker="X",
+            s=80,
+            color="black",
+            zorder=5
+        )
+
+        for day, activity in zip(
+            donation_days,
+            activities
+        ):
+
+            ax.annotate(
+                f"{activity:.2f}",
+                (day, activity),
+                xytext=(0, 8),
+                textcoords="offset points",
+                ha="center",
+                fontsize=6
+            )
+
+    # --------------------------------------------------
+    # Variant transitions
+    # --------------------------------------------------
+
+    for event in variant_changes:
+
+        ax.axvline(
+            event["day"],
+            color="black",
+            linestyle="--",
+            alpha=0.5
+        )
+
+    # --------------------------------------------------
+    # Activity thresholds
+    # --------------------------------------------------
+
+    ax.axhline(
+        initial_ccp_activity,
+        color="black",
+        linestyle=":",
+        label="Initial activity (0.70)"
+    )
+
+    ax.axhline(
+        high_risk_threshold,
+        color="orange",
+        linestyle="--",
+        label=f"High-risk threshold ({high_risk_threshold:.2f})"
+    )
+
+    ax.axhline(
+        minimum_usable_activity,
+        color="red",
+        linestyle=":"
+    )
+
+    # --------------------------------------------------
+    # Formatting
+    # --------------------------------------------------
+
+    ax.set_title(
+        "Projected end-of-treatment activity of representative donors"
+    )
+
+    ax.set_xlabel(
+        "Simulation day"
+    )
+
+    ax.set_ylabel(
+        "Projected end-of-treatment activity"
+    )
+
+    ax.set_ylim(
+        0,
+        0.8
+    )
+
+    ax.grid(
+        alpha=0.3
+    )
+
+    ax.legend(
+        fontsize=7
+    )
+
+    plt.tight_layout()
+    plt.show()
 
 def print_report(results):
     print("\nMODEL SUMMARY")
@@ -529,12 +765,15 @@ def calculate_daily_batches(
             )
 
     # Apply collection capacity
+    daily_potential_donations = []
     for day in range(n_days):
 
         total_donations_today = sum(
             batch["donors"]
             for batch in daily_batches[day]
         )
+
+        daily_potential_donations.append(total_donations_today)
 
         if total_donations_today <= capacity_per_day:
             continue
@@ -731,7 +970,7 @@ def calculate_daily_batches(
 
         plt.close(fig)
 
-    return daily_batches
+    return daily_batches, daily_potential_donations
 
 
 def update_inventory(
@@ -889,7 +1128,9 @@ def allocate_patients(
     requested_patients,
     doses_per_treatment,
     available_stock,
-    treatment_class
+    treatment_class,
+    variant_changes,
+    treatment_duration
 ):
 
     max_new_patients = (
@@ -918,6 +1159,9 @@ def allocate_patients(
         if batch["treatment_class"] != treatment_class:
             continue
 
+        treatment_end_day = batch["donation_day"] + treatment_duration
+        future_variant = get_variant(variant_changes, treatment_end_day)
+
         take = min(
             batch["doses"],
             remaining
@@ -931,7 +1175,7 @@ def allocate_patients(
         batch["doses"] -= take
         remaining -= take
 
-        doses_age.append({"doses":take, "age":batch["age"]})
+        doses_age.append({"doses":take, "age":batch["age"], "eot_variant":future_variant})
     
     actual_doses_reserved = (
         doses_needed - remaining
@@ -1068,7 +1312,7 @@ def run_model(
     over_titre_donor_rate=0.2,
     doses_per_patient_per_day=2,
     donation_volume=0.6,
-    donations_per_donor=1,
+    donations_per_donor=3,
     min_donation_interval=14, 
     dose_volume=0.0012,
     delay_inf_to_hosp=7,
@@ -1096,7 +1340,7 @@ def run_model(
     debug
     )   
 
-    daily_batches = calculate_daily_batches(
+    daily_batches, daily_potential_donations = calculate_daily_batches(
     I,
     n_days,
     donor_rate,
@@ -1225,7 +1469,9 @@ def run_model(
                 high_risk_requested,
                 doses_per_treatment,
                 high_risk_stock,
-                "high_risk"
+                "high_risk",
+                variant_changes,
+                treatment_duration
             )
 
         (   inventory,
@@ -1239,7 +1485,9 @@ def run_model(
                 general_requested,
                 doses_per_treatment,
                 general_stock,
-                "general"
+                "general",
+                variant_changes,
+                treatment_duration
             )
         
         high_risk_ages.append(doses_age_high_risk)
@@ -1344,6 +1592,7 @@ def run_model(
         "H_prevented": H_prevented,
         "H_reduction_pct": H_reduction_pct,
 
+        "daily_potential_donations": daily_potential_donations, 
         "daily_donations": daily_donations,
 
         # Demand/adoption
@@ -1357,6 +1606,8 @@ def run_model(
         "high_risk_patients": high_risk_patients_series,
         "general_patients": general_patients_series,
         "active_patients": active_patients,
+        "high_risk_age_stock_delivered": [[item["age"] for item in day] for day in high_risk_ages],
+        "high_risk_variant_stock_delivered": [[item["eot_variant"] for item in day] for day in high_risk_ages],
 
         # Coverage
         "coverage": C,
@@ -1747,8 +1998,8 @@ if __name__ == "__main__":
     # date in which the variant became dominant (exceded 50% proportion) https://epidata.sciensano.be/epistat/dashboard/#covid_variants
     variant_dates = {
         "Alpha": "2020-12-15",
-        "Delta": "2021-06-30", # previous date I had was "2021-06-15". This new one is from https://epidata.sciensano.be/epistat/dashboard/#covid_variants
-        "Omicron": "2022-01-01" # previous date I had was "2021-12-15" 
+        "Delta": "2021-06-29", # previous date I had was "2021-06-15". This new one is from https://epidata.sciensano.be/epistat/dashboard/#covid_variants
+        "Omicron": "2021-12-31" # previous date I had was "2021-12-15" 
     }
 
     for variant, date_str in variant_dates.items():
@@ -1775,11 +2026,44 @@ if __name__ == "__main__":
         debug=False
     )
     
-    donation_window_start = 30
-    donation_window_end = 180
-    min_donation_interval = 14
+    # donation_window_start = 30
+    # donation_window_end = 180
+    # min_donation_interval = 14
+    # donations_per_donor=3
+    # initial_ccp_activity=0.7
+    # cross_neutralization = {
+    #         "Wuhan": {
+    #             "Wuhan": 1.00,
+    #             "Alpha": 1/np.sqrt(2.3), # 0.66
+    #             "Delta": 1/np.sqrt(1.6), # 0.79
+    #             "Omicron": 1/np.sqrt(20) # 0.22
+    #         },
+    
+    #         "Alpha": {
+    #             "Alpha": 1.00,
+    #             "Delta": 1/np.sqrt(2.2), # 0.67
+    #             "Omicron": 1/np.sqrt(50) # 0.14
+    #         },
+    
+    #         "Delta": {
+    #             "Delta": 1.00,
+    #             "Omicron": 1/np.sqrt(11) # 0.30
+    #         },
+    
+    #         "Omicron": {
+    #             "Omicron": 1.00
+    #         }
+    #     }
 
-
+    # debug_donation_schedule(
+    #     donation_window_start,
+    #     donation_window_end,
+    #     min_donation_interval,
+    #     donations_per_donor,
+    #     initial_ccp_activity,
+    #     variant_changes,
+    #     cross_neutralization
+    #     )
     # summary = summarize_results(results)
 
     # print_report(results)

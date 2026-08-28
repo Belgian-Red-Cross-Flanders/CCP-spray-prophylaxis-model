@@ -32,8 +32,8 @@ variant_changes = []
 
 variant_dates = {
     "Alpha": "2020-12-15",
-    "Delta": "2021-06-15",
-    "Omicron": "2021-12-15"
+    "Delta": "2021-06-29",
+    "Omicron": "2021-12-31"
 }
 
 for variant, date_str in variant_dates.items():
@@ -1022,7 +1022,7 @@ with tab_model:
         cum_hosp,
         color="black",
         linewidth=2,
-        label="Actual (no program)"
+        label="Werkelijk (geen programma)"
     )
 
     ax.plot(
@@ -1030,7 +1030,7 @@ with tab_model:
         cum_hosp_ccp,
         color="tab:blue",
         linewidth=2,
-        label="With CCP prophylaxis"
+        label="Met CCP-profylaxe"
     )
 
     # shaded prevented area
@@ -1053,7 +1053,7 @@ with tab_model:
     ax.text(
         0.78,
         0.65,
-        f"Total prevented:\n"
+        f"Totaal voorkomen:\n"
         f"{total_prevented:,.0f}\n"
         f"({pct_prevented:.1f}%)",
         transform=ax.transAxes,
@@ -1067,11 +1067,11 @@ with tab_model:
     )
 
     ax.set_ylabel(
-        "Cumulative hospitalizations"
+        "Cumulatieve ziekenhuisopnames"
     )
 
     ax.set_title(
-        "Cumulative hospitalizations with and without i.n. CCP"
+        "Cumulatieve ziekenhuisopnames met en zonder intranasaal CCP"
     )
 
     ax.legend(fontsize=7)
@@ -1116,7 +1116,7 @@ with tab_model:
         x,
         realized,
         color="steelblue",
-        label="Hospitalizations with CCP"
+        label="Ziekenhuisopnames met CCP"
     )
     # prevented hospitalizations
     ax.bar(
@@ -1125,7 +1125,7 @@ with tab_model:
         bottom=realized,
         color="red",
         alpha=0.8,
-        label="Prevented hospitalizations"
+        label="Voorkomen ziekenhuisopnames"
     )
     # annotate prevented numbers
     for i in range(len(period_names)):
@@ -1146,11 +1146,11 @@ with tab_model:
         labelsize=6
     )
     ax.set_ylabel(
-        "Hospitalizations",
+        "Ziekenhuisopnames",
         fontsize=8
     )
     ax.set_title(
-        "Hospitalizations prevented by variant period",
+        "Voorkomen ziekenhuisopnames per variantperiode",
         fontsize=8
     )
     ax.legend(
@@ -1276,11 +1276,69 @@ with tab_model:
     plt.tight_layout()
     st.pyplot(fig, width="stretch")
 
+    # Donations per day
+    ymax = 500
+    potential = np.minimum(results["daily_potential_donations"], ymax)
+    fig, ax = plt.subplots(figsize=(6, 3))
+    ax.plot(dates, results["daily_donations"], label="Donations", color="blue", linewidth=0.7, alpha=0.6)
+    ax.plot(dates, potential, label="Potential donations", color="orange", linewidth=0.7, alpha=0.6)
+    ax.axhline(
+        y=capacity_per_day,
+        color="red",
+        linestyle="--",
+        linewidth=1,
+        label="Capacity per day"
+    )
+    #mark days where potential exceeds ymax
+    mask = results["daily_potential_donations"] > potential
+    ax.scatter(
+        np.array(dates)[mask],
+        np.full(mask.sum(), ymax),
+        marker="^",
+        color="orange",
+        s=2,
+        label=f">{ymax}"
+    )
+    ax.set_ylabel("Donations/day")
+    ax.set_ylim(0,500)
+    ax.legend(fontsize=5, loc="upper right")
+    ax.grid()
+    ax.set_title(f"Donations (potential donations max is {round(max(results["daily_potential_donations"]))})")
+    add_variant_lines(
+        ax,
+        dates[0],
+        variant_changes
+    )
+    format_axes(ax)
+    st.pyplot(fig, width="stretch")
+
+    # Stock
+    fig, ax = plt.subplots(figsize=(6, 3))
+    ax.plot(dates, results["stock"] / results["doses_per_treatment"], label="Stock", color="blue", linewidth=2, alpha=0.5)
+    ax.plot(dates, results["high_risk_stock"] / results["doses_per_treatment"], label="High-risk stock", color="red", linewidth=1)
+    ax.plot(dates, results["general_stock"] / results["doses_per_treatment"], label="General-use stock", color="green", linewidth=1)
+    ax.set_ylabel("Treatment courses in inventory")
+    ax.set_title("Inventory")
+    ax.legend(fontsize=7)
+    ax.grid()
+    add_variant_lines(
+        ax,
+        dates[0],
+        variant_changes
+    )    
+    format_axes(ax)
+    st.pyplot(fig, width="stretch")
 
     # Flows (produced, delivered, discarded)
+    show_general_delivered = st.toggle(
+        "Show treatment courses delivered to general population",
+        value=False)
     fig, ax = plt.subplots(figsize=(6, 3))
-    ax.plot(dates, results["daily_production"]/ results["doses_per_treatment"], label="Production", color="blue", linewidth=2, alpha=0.5)
-    ax.plot(dates, results["daily_reserved_doses"] / results["doses_per_treatment"], label="Delivered", color="green", linewidth=1)
+    ax.plot(dates, results["daily_production"]/ results["doses_per_treatment"], label="Production", color="blue", linewidth=1, alpha=0.5)
+    # ax.plot(dates, results["daily_reserved_doses"] / results["doses_per_treatment"], label="Delivered", color="green", linewidth=1)
+    ax.plot(dates, results["daily_reserved_doses_high_risk"] / results["doses_per_treatment"], label="Delivered (high-risk)", color="orange", linewidth=0.7)
+    if show_general_delivered:
+        ax.plot(dates, results["daily_reserved_doses_general"] / results["doses_per_treatment"], label="Delivered (general pop.)", color="gray", linewidth=0.7)
     ax.plot(dates, results["discarded_doses"] / results["doses_per_treatment"], label="Discarded", color="red", linewidth=1)
     ax.set_ylabel("Treatment courses/day")
     ax.legend(fontsize=7)
@@ -1310,6 +1368,7 @@ with tab_model:
     )    
     format_axes(ax)
     st.pyplot(fig, width="stretch")
+
 
     # Demand and treated (high-risk)
     fig, ax = plt.subplots(figsize=(6, 3))
