@@ -326,8 +326,8 @@ def run_model(
 
 
         # Activity
-        "high_risk_end_treatment_efficacy": high_risk_treatment_efficacy_series,
-        "general_end_treatment_efficacy": general_treatment_efficacy_series,
+        "high_risk_treatment_efficacy": high_risk_treatment_efficacy_series,
+        "general_treatment_efficacy": general_treatment_efficacy_series,
         "mean_stock_efficacy": stock_efficacy_series,
 
         # Capacity diagnostics

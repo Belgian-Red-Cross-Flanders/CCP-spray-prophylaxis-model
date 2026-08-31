@@ -683,7 +683,7 @@ with tab_model:
 
     Activity at collection represents the baseline biological activity of the plasma unit. 
     
-    Activity is subsequently adjusted according to the degree of cross-neutralization between the donor infection variant and the dominant circulating variant at the projected end of treatment.
+    Activity is subsequently adjusted according to the degree of cross-neutralization between the donor infection variant and the dominant circulating variant at the time of treatment.
 
     ---
 
@@ -697,26 +697,26 @@ with tab_model:
     ---
 
     ### Activity threshold for high-risk usage
-    Minimum projected (at the end of treatment) activity required for CCP to be allocated to the high-risk population.
+    Minimum activity, given the patient's current variant, required for CCP to be allocated to the high-risk population.
     
     Projected activity is determined by applying the variant-specific cross-neutralization coefficient between the donor infection variant and the dominant circulating variant expected at treatment completion.
 
-    - 0.50 = plasma projected to retain at least 50% activity at the last day of treatment is reserved for high-risk individuals.
+    - 0.40 = plasma projected to retain at least 40% activity at the last day of treatment is reserved for high-risk individuals.
 
     
     ---    
 
     ### CCP expiry activity
-    Minimum projected end-of-treatment activity required for plasma to remain usable.
+    Minimum projected treatment activity required for plasma to remain usable.
    
-    Plasma is discarded when its projected activity at the end of a newly initiated treatment falls below this threshold.
+    Plasma is discarded when its projected activity for a treatment starting today falls below this threshold.
 
     - 0.05 = CCP expected to retain less than 5% activity by the end of treatment is not allocated to new patients.
 
     ---
 
     ### Variant cross-neutralization matrix
-    Variant-specific effectiveness coefficients describing how well plasma generated from infection with one variant is expected to neutralize a different dominant variant at treatment completion.
+    Variant-specific effectiveness coefficients describing how well plasma generated from infection with one variant is expected to neutralize a different dominant variant at the time of use.
     
     The matrix is based on published reductions in neutralization titres observed between SARS-CoV-2 variants:
     
@@ -753,12 +753,12 @@ with tab_model:
     Duration of prophylaxis (days). The model reserves the complete treatment course at treatment initiation, so on day 1 of treatment we already take from the stock all the doses for all the days.
                     
     Example:
-    - 3 donations × 500 mL = 1.5 L per donor
+    - 3 donations × 600 mL = 1.8 L per donor
     - Total doses = total plasma volume / dose volume
     - current spray = 600 µL per nostril = 1.2 mL per dose 
-    - 1.5 L / 0.0012 L ≈ 1250 doses per donor
+    - 1.8 L / 0.0012 L ≈ 1500 doses per donor
     - treatment: 2 doses/day for 3 months (≈90 days) (so 180 doses per patient (treatment course))
-    - patients_per_donor ≈ 1250 / 180 ≈ 7 people
+    - patients_per_donor ≈ 1500 / 180 ≈ 8.3 people
                     
     ---
 
@@ -836,13 +836,13 @@ with tab_model:
     Stored plasma is classified into:
 
     High-risk stock
-    - Projected end-of-treatment activity above the high-risk threshold.
+    - Projected treatment activity above the high-risk threshold.
 
     General-use stock
-    - Projected end-of-treatment activity between the high-risk threshold and expiry activity.
+    - Projected treatment activity between the high-risk threshold and expiry activity.
 
     Expired stock
-    - Projected end-of-treatment activity below the expiry threshold and removed from inventory.
+    - Projected treatment activity below the expiry threshold and removed from inventory.
                     
     ---
 
@@ -901,12 +901,6 @@ with tab_model:
 
     ### Stock activity
     Average activity of plasma currently stored in inventory.
-
-    ---
-
-    ### End-of-treatment activity
-    Average activity expected at completion of treatment among patients starting treatment on a given day. \n
-    This value depends on the donor infection variant, the dominant circulating variant expected at treatment completion, and the corresponding cross-neutralization coefficient.
 
                         
     """)
@@ -1560,8 +1554,8 @@ with tab_model:
             x,
             ages,
             c=colors,
-            s=1,
-            alpha=0.5
+            s=0.2,
+            alpha=0.2
         )
     # -----------------------------------------
     # Legend (donor variant)
@@ -1614,14 +1608,14 @@ with tab_model:
     )
     ax.plot(
         dates,
-        results["high_risk_end_treatment_efficacy"],
+        results["high_risk_treatment_efficacy"],
         "--",
-        label="High-risk end of treatment efficacy", 
+        label="High-risk treatment efficacy", 
         linewidth=1
     )
     general_eff = np.where(
-        results["general_end_treatment_efficacy"] > 0,
-        results["general_end_treatment_efficacy"],
+        results["general_treatment_efficacy"] > 0,
+        results["general_treatment_efficacy"],
         np.nan
     )
 
@@ -1631,7 +1625,7 @@ with tab_model:
             dates,
             general_eff,
             "--",
-            label="General end of treatment efficacy",
+            label="General treatment efficacy",
             linewidth=1
         )
     ax.plot(
