@@ -1348,58 +1348,43 @@ with tab_model:
     st.pyplot(fig, width="stretch")
 
 
-    # Demand and treated (high-risk)
+    # Demand and treated 
+    general_dd = st.toggle(
+                "Demand and delivery to the general population",
+                value=False,
+                key="dd")
+    title = "High-risk"
+    demand = results["high_risk_demand"]
+    patients = results["high_risk_patients"]
+    if general_dd:
+        title ="General population"
+        demand = results["general_demand"]
+        patients = results["general_patients"]
     fig, ax = plt.subplots(figsize=(6, 3))
     ax.plot(
         dates,
-        results["high_risk_demand"],
-        label="High-risk demand",
-        color="black"
+        demand,
+        label=f"{title} demand",
+        color="black",
+        alpha=0.4
     )
     ax.plot(
         dates,
-        results["high_risk_patients"],
-        label="High-risk treated",
+        patients,
+        label=f"{title} treated",
         color="red",
         linewidth=0.5
     )
     ax.set_ylabel("Patients/day")
     ax.legend(fontsize=7)
     ax.grid(alpha=0.3)
-    ax.set_title("High-risk: demand and delivery")
+    ax.set_title(f"{title}: demand and delivery")
     format_axes(ax)
     add_variant_lines(
         ax,
         dates[0],
         variant_changes
     )
-    st.pyplot(fig, width="stretch")
-
-    # Demand and treated (general)
-    fig, ax = plt.subplots(figsize=(6, 3))
-    ax.plot(
-    dates,
-    results["general_demand"],
-    label="General demand",
-    color="gray",
-    alpha=0.5
-    )
-    ax.set_ylabel("Patients/day")
-    ax.plot(
-        dates,
-        results["general_patients"],
-        label="General treated",
-        color="green"
-    )
-    ax.legend(fontsize=7)
-    ax.grid(alpha=0.3)
-    ax.set_title("General population: demand and delivery")
-    add_variant_lines(
-        ax,
-        dates[0],
-        variant_changes
-    )
-    format_axes(ax)
     st.pyplot(fig, width="stretch")
 
 
@@ -1476,6 +1461,10 @@ with tab_model:
     # y = plasma age
     # color = donor variant
     # background = patient variant
+    show_general = st.toggle(
+            "Age of delivered plasma to general population",
+            value=False,
+            key="age_var")
     fig, ax = plt.subplots(figsize=(6, 3))
     variant_colors = {
         "Wuhan": "#1f77b4",
@@ -1487,9 +1476,26 @@ with tab_model:
     # Background shading by patient variant
     # -----------------------------------------
     patient_variant_day = []
-    for variants in results[
-        "high_risk_patient_variant_stock_delivered"
-    ]:
+
+    patient_variant_stock_delivered = results[
+            "high_risk_patient_variant_stock_delivered"
+        ]
+    donor_variant_stock_delivered = results[
+            "high_risk_donor_variant_stock_delivered"
+        ]
+    age_stock_delivered = results["high_risk_age_stock_delivered"]
+    gen_high = "high-risk population"
+    if show_general:
+        patient_variant_stock_delivered = results[
+                "general_patient_variant_stock_delivered"
+            ]
+        donor_variant_stock_delivered = results[
+                "general_donor_variant_stock_delivered"
+            ]
+        age_stock_delivered = results["general_age_stock_delivered"]
+        gen_high = "general population"
+    
+    for variants in patient_variant_stock_delivered:
         if len(variants) == 0:
             patient_variant_day.append(None)
         else:
@@ -1531,13 +1537,9 @@ with tab_model:
         patient_variants
     ) in enumerate(
         zip(
-            results["high_risk_age_stock_delivered"],
-            results[
-                "high_risk_donor_variant_stock_delivered"
-            ],
-            results[
-                "high_risk_patient_variant_stock_delivered"
-            ]
+            age_stock_delivered,
+            donor_variant_stock_delivered,
+            patient_variant_stock_delivered
         )
     ):
         if len(ages) == 0:
@@ -1571,7 +1573,7 @@ with tab_model:
         "Age of delivered CCP plasma (days)"
     )
     ax.set_title(
-        "Delivered plasma age\n"
+        f"Delivered plasma age ({gen_high})\n"
         "point color = donor variant, background = patient variant"
     )
     ax.grid(
@@ -1586,6 +1588,11 @@ with tab_model:
         fontsize=5,
         loc="lower right"
     )
+    if show_general:
+        ax.legend(
+            fontsize=5,
+            loc="lower left"
+        )        
     format_axes(ax)
     st.pyplot(
         fig,
@@ -1596,22 +1603,16 @@ with tab_model:
     fig, ax = plt.subplots(figsize=(6, 3))
     ax.plot(
         dates,
-        results["coverage"],
-        label="High-risk coverage", 
-        linewidth=0.5
-    )
-    ax.plot(
-        dates,
         results["coverage_effective"],
         label="Effective coverage", 
-        linewidth=1
+        linewidth=0.5
     )
     ax.plot(
         dates,
         results["high_risk_treatment_efficacy"],
         "--",
         label="High-risk treatment efficacy", 
-        linewidth=1
+        linewidth=0.5
     )
     general_eff = np.where(
         results["general_treatment_efficacy"] > 0,
@@ -1632,7 +1633,7 @@ with tab_model:
         dates,
         results["mean_stock_efficacy"],
         ":",
-        label="Stock efficacy", 
+        label="Mean stock efficacy", 
         linewidth=1
     )
     ax.plot(

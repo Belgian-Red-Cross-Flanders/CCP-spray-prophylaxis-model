@@ -166,7 +166,7 @@ def run_model(
             high_risk_reserved,
             high_risk_activity,
             doses_age_high_risk
-        ) = model_methods.allocate_patients(
+        ) = model_methods.match_fifo_allocate_patients(
                 inventory,
                 high_risk_requested,
                 doses_per_treatment,
@@ -181,7 +181,7 @@ def run_model(
             general_reserved,
             general_activity,
             doses_age_general
-        ) = model_methods.allocate_patients(
+        ) = model_methods.match_fifo_allocate_patients(
                 inventory,
                 general_requested,
                 doses_per_treatment,
@@ -306,6 +306,9 @@ def run_model(
         "high_risk_age_stock_delivered": [[item["age"] for item in day] for day in high_risk_ages],
         "high_risk_patient_variant_stock_delivered": [[item["patient_variant"] for item in day] for day in high_risk_ages],
         "high_risk_donor_variant_stock_delivered": [[item["donor_variant"] for item in day] for day in high_risk_ages],
+        "general_age_stock_delivered": [[item["age"] for item in day] for day in general_ages],
+        "general_patient_variant_stock_delivered": [[item["patient_variant"] for item in day] for day in general_ages],
+        "general_donor_variant_stock_delivered": [[item["donor_variant"] for item in day] for day in general_ages],
 
         # Coverage
         "coverage": C,

@@ -398,7 +398,93 @@ def summarize_inventory(
         general_stock
     )
 
-def allocate_patients(
+def match_fifo_allocate_patients(
+    inventory,
+    requested_patients,
+    doses_per_treatment,
+    available_stock,
+    treatment_class,
+    variant_today
+):
+
+    max_new_patients = (
+        available_stock
+        / doses_per_treatment
+    )
+
+    requested_starts = min(
+        requested_patients,
+        max_new_patients
+    )
+
+    doses_needed = (
+        requested_starts
+        * doses_per_treatment
+    )
+
+    remaining = doses_needed
+    effective_treatments = 0
+    doses_age = []
+
+    # Prioritize best-matched (highest future_activity) batches first, so
+    # a patient draws the most cross-neutralization-matched stock before
+    # older, worse-matched stock that merely still clears the threshold.
+    # Age is only a tiebreaker among equally-matched batches, to keep
+    # FIFO-style waste control within a match tier.
+    candidates = sorted(
+        (batch for batch in inventory if batch["treatment_class"] == treatment_class),
+        key=lambda b: (-b["future_activity"], -b["age"])
+    )
+
+    for batch in candidates:
+
+        if remaining <= 0:
+            break
+
+        take = min(
+            batch["doses"],
+            remaining
+        )
+
+        effective_treatments += (
+            take
+            * batch["future_activity"]
+        )
+
+        batch["doses"] -= take
+        remaining -= take
+
+        doses_age.append({"doses":take, "age":batch["age"], "donor_variant":batch["donor_variant"], "patient_variant":variant_today})
+    
+    actual_doses_reserved = (
+        doses_needed - remaining
+    )
+
+    new_patients = (
+        actual_doses_reserved
+        / doses_per_treatment
+    )
+
+    if actual_doses_reserved > 0:
+
+        mean_treatment_activity = (
+            effective_treatments
+            / actual_doses_reserved
+        )
+
+    else:
+
+        mean_treatment_activity = 0
+
+    return (
+        inventory,
+        new_patients,
+        max_new_patients,
+        actual_doses_reserved,
+        mean_treatment_activity,
+        doses_age)
+
+def fifo_allocate_patients(
     inventory,
     requested_patients,
     doses_per_treatment,
