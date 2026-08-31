@@ -485,7 +485,7 @@ with tab_pandemic:
 
     # Combine legends
     ax.legend(loc='upper right', fontsize=7)
-    ax.grid()
+    ax.grid(alpha=0.3)
     add_variant_lines(
             ax,
             dates[0],
@@ -517,7 +517,7 @@ with tab_pandemic:
         )
     # Combine legends
     ax.legend(loc='upper right', fontsize=7)
-    ax.grid()
+    ax.grid(alpha=0.3)
     add_variant_lines(
             ax,
             dates[0],
@@ -1000,7 +1000,7 @@ with tab_model:
     lines, labels = ax.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
     ax.legend(handles=lines + lines2, labels=labels + labels2, loc='center right', fontsize=7)
-    ax.grid()
+    ax.grid(alpha=0.3)
     format_axes(ax)
     format_axes(ax2)
     st.pyplot(fig, width="stretch")
@@ -1075,7 +1075,7 @@ with tab_model:
     )
 
     ax.legend(fontsize=7)
-    ax.grid()
+    ax.grid(alpha=0.3)
 
     format_axes(ax)
 
@@ -1157,6 +1157,7 @@ with tab_model:
         fontsize=6
     )
     ax.grid(
+        alpha=0.3,
         axis="y"
     )
     ax.yaxis.set_major_formatter(
@@ -1272,7 +1273,7 @@ with tab_model:
     ax.yaxis.set_major_formatter(
         FuncFormatter(smart_format)
     )
-    ax.grid(axis="y")
+    ax.grid(axis="y", alpha=0.3)
     plt.tight_layout()
     st.pyplot(fig, width="stretch")
 
@@ -1302,7 +1303,7 @@ with tab_model:
     ax.set_ylabel("Donations/day")
     ax.set_ylim(0,500)
     ax.legend(fontsize=5, loc="upper right")
-    ax.grid()
+    ax.grid(alpha=0.3)
     ax.set_title(f"Donations (potential donations max is {round(max(results["daily_potential_donations"]))})")
     add_variant_lines(
         ax,
@@ -1320,7 +1321,7 @@ with tab_model:
     ax.set_ylabel("Treatment courses in inventory")
     ax.set_title("Inventory")
     ax.legend(fontsize=7)
-    ax.grid()
+    ax.grid(alpha=0.3)
     add_variant_lines(
         ax,
         dates[0],
@@ -1342,30 +1343,13 @@ with tab_model:
     ax.plot(dates, results["discarded_doses"] / results["doses_per_treatment"], label="Discarded", color="red", linewidth=1)
     ax.set_ylabel("Treatment courses/day")
     ax.legend(fontsize=7)
-    ax.grid()
+    ax.grid(alpha=0.3)
     ax.set_title("Operational flows")
     add_variant_lines(
         ax,
         dates[0],
         variant_changes
     )
-    format_axes(ax)
-    st.pyplot(fig, width="stretch")
-
-    # Stock
-    fig, ax = plt.subplots(figsize=(6, 3))
-    ax.plot(dates, results["stock"] / results["doses_per_treatment"], label="Stock", color="blue", linewidth=2, alpha=0.5)
-    ax.plot(dates, results["high_risk_stock"] / results["doses_per_treatment"], label="High-risk stock", color="red", linewidth=1)
-    ax.plot(dates, results["general_stock"] / results["doses_per_treatment"], label="General-use stock", color="green", linewidth=1)
-    ax.set_ylabel("Treatment courses in inventory")
-    ax.set_title("Inventory")
-    ax.legend(fontsize=7)
-    ax.grid()
-    add_variant_lines(
-        ax,
-        dates[0],
-        variant_changes
-    )    
     format_axes(ax)
     st.pyplot(fig, width="stretch")
 
@@ -1387,7 +1371,7 @@ with tab_model:
     )
     ax.set_ylabel("Patients/day")
     ax.legend(fontsize=7)
-    ax.grid()
+    ax.grid(alpha=0.3)
     ax.set_title("High-risk: demand and delivery")
     format_axes(ax)
     add_variant_lines(
@@ -1414,7 +1398,7 @@ with tab_model:
         color="green"
     )
     ax.legend(fontsize=7)
-    ax.grid()
+    ax.grid(alpha=0.3)
     ax.set_title("General population: demand and delivery")
     add_variant_lines(
         ax,
@@ -1480,7 +1464,7 @@ with tab_model:
 
     ax.set_ylabel("Treatment courses")
     ax.legend(bbox_to_anchor=(0.4, 1.05))
-    ax.grid()
+    ax.grid(alpha=0.3)
 
     # Shrink current axis's height by 10% on the bottom
     box = ax.get_position()
@@ -1492,6 +1476,127 @@ with tab_model:
     format_axes(ax)
 
     st.pyplot(fig, width="stretch")
+
+
+    # Delivered plasma age by day
+    # y = plasma age
+    # color = donor variant
+    # background = patient variant
+    fig, ax = plt.subplots(figsize=(6, 3))
+    variant_colors = {
+        "Wuhan": "#1f77b4",
+        "Alpha": "#d62728",
+        "Delta": "#2ca02c",
+        "Omicron": "#ff7f0e"
+    }
+    # -----------------------------------------
+    # Background shading by patient variant
+    # -----------------------------------------
+    patient_variant_day = []
+    for variants in results[
+        "high_risk_patient_variant_stock_delivered"
+    ]:
+        if len(variants) == 0:
+            patient_variant_day.append(None)
+        else:
+            # all deliveries from a day are usually
+            # to the same dominant circulating variant
+            patient_variant_day.append(
+                variants[0]
+            )
+    start_idx = None
+    for i in range(len(patient_variant_day)):
+        if patient_variant_day[i] is None:
+            continue
+        if start_idx is None:
+            start_idx = i
+        is_end = (
+            i == len(patient_variant_day) - 1
+            or patient_variant_day[i + 1]
+            != patient_variant_day[start_idx]
+        )
+        if is_end:
+            variant = patient_variant_day[start_idx]
+            ax.axvspan(
+                dates[start_idx],
+                dates[i],
+                color=variant_colors.get(
+                    variant,
+                    "lightgray"
+                ),
+                alpha=0.10
+            )
+            start_idx = None
+
+    # -----------------------------------------
+    # Scatter points
+    # -----------------------------------------
+    for day_idx, (
+        ages,
+        donor_variants,
+        patient_variants
+    ) in enumerate(
+        zip(
+            results["high_risk_age_stock_delivered"],
+            results[
+                "high_risk_donor_variant_stock_delivered"
+            ],
+            results[
+                "high_risk_patient_variant_stock_delivered"
+            ]
+        )
+    ):
+        if len(ages) == 0:
+            continue
+        x = [dates[day_idx]] * len(ages)
+        colors = [
+            variant_colors.get(
+                donor_variant,
+                "gray"
+            )
+            for donor_variant in donor_variants
+        ]
+        ax.scatter(
+            x,
+            ages,
+            c=colors,
+            s=1,
+            alpha=0.5
+        )
+    # -----------------------------------------
+    # Legend (donor variant)
+    # -----------------------------------------
+    for variant, color in variant_colors.items():
+        ax.scatter(
+            [],
+            [],
+            c=color,
+            label=variant
+        )
+    ax.set_ylabel(
+        "Age of delivered CCP plasma (days)"
+    )
+    ax.set_title(
+        "Delivered plasma age\n"
+        "point color = donor variant, background = patient variant"
+    )
+    ax.grid(
+        alpha=0.3
+    )
+    add_variant_lines(
+        ax,
+        dates[0],
+        variant_changes
+    )
+    ax.legend(
+        fontsize=5,
+        loc="lower right"
+    )
+    format_axes(ax)
+    st.pyplot(
+        fig,
+        width="stretch"
+    )
 
     # Coverage, efficacy and adoption
     fig, ax = plt.subplots(figsize=(6, 3))
@@ -1559,7 +1664,7 @@ with tab_model:
                     box.width, box.height * 0.9])
     ax.set_title("Coverage, efficacy and adoption", pad=25)
     ax.legend(ncol=4, fontsize=5, loc='upper center', bbox_to_anchor=(0.5, 1.15))
-    ax.grid()
+    ax.grid(alpha=0.3)
     add_variant_lines(
         ax,
         dates[0],
@@ -1608,7 +1713,7 @@ with tab_model:
         "Inventory eligibility composition"
     )
     ax.legend()
-    ax.grid()
+    ax.grid(alpha=0.3)
     format_axes(ax)
 
     st.pyplot(fig, width="stretch")
@@ -1819,7 +1924,7 @@ with tab_sensitivity:
         f"Sensitivity to {parameter}"
     )
 
-    ax.grid(True)
+    ax.grid(alpha=0.3)
 
     st.pyplot(fig, width="stretch")
 
@@ -1837,7 +1942,7 @@ with tab_sensitivity:
         "Total general population reached"
     )
 
-    ax.grid(True)
+    ax.grid(alpha=0.3)
 
     st.pyplot(fig, width="stretch")
 
