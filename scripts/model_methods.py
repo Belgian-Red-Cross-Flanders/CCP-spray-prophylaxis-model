@@ -212,7 +212,7 @@ def calculate_daily_batches(
             activity = initial_ccp_activity # initialize with the full activity
 
             # determine donor infection variant
-            donor_variant = get_variant(variant_changes, donation_day)
+            donor_variant = get_variant(variant_changes, infection_day)
 
             daily_batches[
                 donation_day
@@ -312,14 +312,12 @@ def get_variant(variant_changes, day):
 
 def classify_inventory(
     inventory,
-    current_day,
-    treatment_duration,
-    variant_changes,
+    variant_today,
     high_risk_use_threshold,
     minimum_usable_activity,
     max_storage_age
 ):
-    # Classifies the batches based on their activity at end of treatment if it would be deployed today - if it's enough, it goes to high-risk patients, if below threshold, goes to general population.
+    # Classifies the batches based on their activity if it would be deployed today - if it's enough, it goes to high-risk patients, if below threshold, goes to general population.
     # If end treatment activity is below minimum usable, the batch gets deleted
 
     cross_neutralization = {
@@ -346,17 +344,9 @@ def classify_inventory(
         }
     }
 
-    treatment_end_day = current_day + treatment_duration
-
-    future_variant = get_variant(
-        variant_changes,
-        treatment_end_day
-    )
-
     expired_today = 0
     surviving_inventory = []
     for batch in inventory:
-
         # storage expiry
         if batch["age"] > max_storage_age:
             expired_today += batch["doses"]
@@ -364,10 +354,7 @@ def classify_inventory(
 
         donor_variant = batch["donor_variant"]
 
-        future_activity = (
-            batch["activity"]
-            * cross_neutralization[donor_variant][future_variant]
-        )
+        future_activity = batch["activity"] * cross_neutralization[donor_variant][variant_today]
 
         batch["future_activity"] = future_activity
 

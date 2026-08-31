@@ -63,7 +63,6 @@ def run_model(
     daily_doses = np.zeros(n_days)
     daily_donations = np.zeros(n_days)
     for day in range(n_days):
-
         daily_doses[day] = sum(
             batch["doses"]
             for batch in daily_batches[day]
@@ -73,14 +72,12 @@ def run_model(
                     for batch in daily_batches[day]
                 )
 
-
     high_risk_population, general_population = model_methods.calculate_populations(
         H,
         I,
         delay_inf_to_hosp,
         debug
     )
-
 
     stock = np.zeros_like(H, dtype=float)
 
@@ -130,11 +127,11 @@ def run_model(
             debug=False
         )
 
+        variant_today = model_methods.get_variant(variant_changes, i) # the COVID variant that the people treated today have
+
         inventory, expired_today = model_methods.classify_inventory(
             inventory,
-            i,
-            treatment_duration,
-            variant_changes,
+            variant_today,
             high_risk_use_threshold,
             minimum_usable_activity,
             max_storage_age
@@ -162,8 +159,7 @@ def run_model(
         for name, value in variant_counts.items():
             variant_series[name][i] = value
 
-        variant_today = model_methods.get_variant(variant_changes, i) # the COVID variant that the people treated today have
-
+    
         (   inventory,
             high_risk_patients, # actual patients that started (can be less than capacity)
             max_high_risk_patients, # capacity implied by inventory
