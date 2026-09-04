@@ -7,6 +7,7 @@ from matplotlib.ticker import FuncFormatter
 
 from model_hospitalization import run_model, summarize_results
 
+
 # HOW TO RUN: & "C:\Users\MCASTRO\AppData\Local\Python\pythoncore-3.14-64\python.exe" -m streamlit run scripts/app.py   
 # OPTIMAL PARAMETERS (DIFFERENTIAL EVOLUTION OPTIMIZER) RERUN
 ## LOAD + ALIGN DATA
@@ -138,7 +139,7 @@ def smart_format(x, pos):
         return f"{x:.2f}"
 
 
-def format_axes(ax):
+def format_axes(ax, months=True):
 
     # Align all plots
     ax.figure.subplots_adjust(
@@ -148,13 +149,14 @@ def format_axes(ax):
         top=0.92
     )
 
-    # Date axis
-    ax.xaxis.set_major_locator(
-        mdates.MonthLocator(interval=6)
-    )
-    ax.xaxis.set_major_formatter(
-        mdates.DateFormatter('%Y-%m')
-    )
+    if months:
+        # Date axis
+        ax.xaxis.set_major_locator(
+            mdates.MonthLocator(interval=6)
+        )
+        ax.xaxis.set_major_formatter(
+            mdates.DateFormatter('%Y-%m')
+        )
 
     # Tick labels
     ax.tick_params(
@@ -179,238 +181,6 @@ def format_axes(ax):
 
     ax.margins(x=0)
 
-def run_tornado(parameter_list):
-
-    tornado_data = []
-
-    for parameter in parameter_list:
-
-        low, high = parameters_dict[parameter]
-        outcomes = []
-
-        for value in [low, high]:
-
-            # copy baseline parameters
-            params = {
-                "initial_ccp_activity": initial_ccp_activity,
-                "minimum_usable_activity": minimum_usable_activity,
-                "potential_donor_rate": potential_donor_rate,
-                "capacity_per_day": capacity_per_day,
-                "A_max": A_max,
-                "t_start": t_start,
-                "T_rollout": T_rollout,
-                "donations_per_donor": donations_per_donor,
-            }
-
-            # overwrite one parameter
-            match parameter:
-
-                case "Initial CCP activity":
-                    params["initial_ccp_activity"] = value
-
-                case "Minimum usable activity":
-                    params["minimum_usable_activity"] = value
-
-                case "Potential donor rate":
-                    params["potential_donor_rate"] = value
-
-                case "Maximum donations/day":
-                    params["capacity_per_day"] = value
-
-                case "Maximum adoption":
-                    params["A_max"] = value
-
-                case "Start time":
-                    params["t_start"] = int(value)
-
-                case "Rollout time":
-                    params["T_rollout"] = int(value)
-
-                case "Donations per donor":
-                    params["donations_per_donor"] = int(value)
-
-
-
-
-            results = run_model(
-                H,
-                I,
-                variant_changes,
-                initial_ccp_activity=0.70,
-                high_risk_use_threshold=0.50,
-                minimum_usable_activity = 0.05,
-                A_max=params["A_max"],
-                capacity_per_day=params["capacity_per_day"],
-                treatment_duration=treatment_duration,
-                potential_donor_rate=params["potential_donor_rate"],
-                over_titre_donor_rate=over_titre_donor_rate,
-                doses_per_patient_per_day=doses_per_patient_per_day,
-                donation_volume=donation_volume,
-                donations_per_donor=params["donations_per_donor"],
-                min_donation_interval=donation_interval,
-                dose_volume=dose_volume,
-                delay_inf_to_hosp=delay_inf_to_hosp,
-                t_start=params["t_start"],
-                T_rollout=params["T_rollout"],
-                window_start=window_start,
-                window_end=window_end
-                )
-
-            outcomes.append(
-                np.sum(results["H_prevented"])
-            )
-
-        tornado_data.append({
-            "parameter": parameter,
-            "low": outcomes[0],
-            "high": outcomes[1],
-            "range": abs(outcomes[1] - outcomes[0])
-        })
-
-    return sorted(
-        tornado_data,
-        key=lambda x: x["range"],
-        reverse=True
-    )
-
-def plot_tornado(
-    tornado_data,
-    title,
-    baseline_prevented,
-    baseline_values
-):
-
-    labels = [d["parameter"] for d in tornado_data]
-
-    fig, ax = plt.subplots(
-        figsize=(9, 0.8 * len(labels) + 2)
-    )
-
-    # overall limits for all bars
-    xmin = min(
-        min(d["low"], d["high"])
-        for d in tornado_data
-    )
-
-    xmax = max(
-        max(d["low"], d["high"])
-        for d in tornado_data
-    )
-
-    padding = 0.12 * (xmax - xmin)
-    offset = 0.04 * (xmax - xmin)
-    label_sep = 0.04 * (xmax - xmin)
-
-    ax.set_xlim(
-        xmin - padding,
-        xmax + padding
-    )
-
-    for i, d in enumerate(tornado_data):
-
-        # outcomes at the low/high parameter values
-        low_outcome = d["low"]
-        high_outcome = d["high"]
-
-        left = min(low_outcome, high_outcome)
-        right = max(low_outcome, high_outcome)
-
-        ax.barh(
-            i,
-            right - left,
-            left=left,
-            height=0.7
-        )
-
-        # parameter values
-        param_low, param_high = parameters_dict[d["parameter"]]
-        param_base = baseline_values[d["parameter"]]
-
-        # force separation for tiny bars
-        if abs(high_outcome - low_outcome) < label_sep:
-
-            low_x = baseline_prevented - label_sep
-            high_x = baseline_prevented + label_sep
-
-        else:
-
-            # IMPORTANT:
-            # put 0.01 at the actual outcome produced by 0.01
-            # put 1.0 at the actual outcome produced by 1.0
-
-            low_x = low_outcome
-            high_x = high_outcome
-
-            if low_outcome < high_outcome:
-                low_x -= offset
-                high_x += offset
-            else:
-                low_x += offset
-                high_x -= offset
-
-        # low parameter value
-        ax.text(
-            low_x,
-            i,
-            f"{param_low:g}",
-            ha="center",
-            va="center",
-            fontsize=7,
-            color="navy"
-        )
-
-        # baseline parameter value
-        ax.text(
-            baseline_prevented,
-            i,
-            f"{param_base:g}",
-            ha="center",
-            va="center",
-            fontsize=7,
-            bbox=dict(
-                facecolor="white",
-                alpha=0.95,
-                edgecolor="lightgray",
-                pad=1
-            )
-        )
-
-        # high parameter value
-        ax.text(
-            high_x,
-            i,
-            f"{param_high:g}",
-            ha="center",
-            va="center",
-            fontsize=7,
-            color="darkred"
-        )
-
-
-    ax.axvline(
-        baseline_prevented,
-        color="red",
-        linestyle="--",
-        linewidth=2,
-        label=f"Baseline = {baseline_prevented:.0f}"
-    )
-
-    ax.set_yticks(range(len(labels)))
-    ax.set_yticklabels(labels)
-
-    ax.invert_yaxis()
-
-    ax.set_xlabel(
-        "Total hospitalizations prevented"
-    )
-
-    ax.set_title(title)
-
-    ax.legend()
-
-    plt.tight_layout()
-
-    st.pyplot(fig, width="stretch")
 #endregion
 # ------------------------------------------------------
 st.title(
@@ -493,6 +263,7 @@ with tab_pandemic:
         )
     format_axes(ax)
     st.pyplot(fig, width="stretch")
+    plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(6, 3))
     # Hospitalizations 
@@ -557,7 +328,7 @@ with tab_model:
     minimum_usable_activity = st.sidebar.slider(
         "CCP expiry activity (remove from stock)",
         min_value=0.001,
-        max_value=0.2,
+        max_value=0.8,
         value=0.05,
         step=0.001,
         format="%0.3f"
@@ -664,7 +435,8 @@ with tab_model:
         t_start=t_start,
         T_rollout=T_rollout,
         window_start=window_start,
-        window_end=window_end
+        window_end=window_end,
+        debug=False
     )
     summary = summarize_results(results)
     #endregion
@@ -998,6 +770,7 @@ with tab_model:
     format_axes(ax)
     format_axes(ax2)
     st.pyplot(fig, width="stretch")
+    plt.close(fig)
 
     # Cumulative hospitalizations
     fig, ax = plt.subplots(figsize=(6, 3))
@@ -1074,6 +847,7 @@ with tab_model:
     format_axes(ax)
 
     st.pyplot(fig, width="stretch")
+    plt.close(fig)
 
     # Hospitalizations by variant period
     # Define variant periods
@@ -1162,6 +936,7 @@ with tab_model:
         fig,
         width="stretch"
     )
+    plt.close(fig)
 
     # Waterfall plot
     fig, ax = plt.subplots(figsize=(6,3))
@@ -1270,18 +1045,28 @@ with tab_model:
     ax.grid(axis="y", alpha=0.3)
     plt.tight_layout()
     st.pyplot(fig, width="stretch")
+    plt.close(fig)
 
     # Donations per day
-    ymax = 500
+    ymax = 600
     potential = np.minimum(results["daily_potential_donations"], ymax)
     fig, ax = plt.subplots(figsize=(6, 3))
-    ax.plot(dates, results["daily_donations"], label="Donations", color="blue", linewidth=0.7, alpha=0.6)
-    ax.plot(dates, potential, label="Potential donations", color="orange", linewidth=0.7, alpha=0.6)
+    ax.plot(dates, potential, label="Potential donors (willing and over-titer)", color="orange", 
+            linewidth=0.8, alpha=0.5)
+    ax.axhline(y=np.mean(np.array(results["daily_potential_donations"])), color="brown",
+             linestyle="--", linewidth=0.6, 
+             label="Average potential donors")
+    ax.plot(dates, results["daily_donations"], 
+            label="Donations (capped by capacity)", color="green", 
+            linewidth=0.8, alpha=0.8)
+    ax.axhline(y=np.mean(results["daily_donations"]), color="blue",
+            linestyle="--", linewidth=0.6, 
+            label="Average donations")
     ax.axhline(
         y=capacity_per_day,
         color="red",
         linestyle="--",
-        linewidth=1,
+        linewidth=0.4,
         label="Capacity per day"
     )
     #mark days where potential exceeds ymax
@@ -1295,10 +1080,10 @@ with tab_model:
         label=f">{ymax}"
     )
     ax.set_ylabel("Donations/day")
-    ax.set_ylim(0,500)
-    ax.legend(fontsize=5, loc="upper right")
+    ax.set_ylim(0,ymax)
+    ax.legend(fontsize=5, loc="center right")
     ax.grid(alpha=0.3)
-    ax.set_title(f"Donations (potential donations max is {round(max(results["daily_potential_donations"]))})")
+    ax.set_title(f"Donations (max potential donations is {max(results['daily_potential_donations']):,.0f})")
     add_variant_lines(
         ax,
         dates[0],
@@ -1306,12 +1091,33 @@ with tab_model:
     )
     format_axes(ax)
     st.pyplot(fig, width="stretch")
+    plt.close(fig)
 
     # Stock
+    stock = np.where(
+    results["stock"] > 0,
+    results["stock"] / results["doses_per_treatment"],
+    np.nan
+    )
+
+    high_risk_stock = np.where(
+        results["high_risk_stock"] > 0,
+        results["high_risk_stock"] / results["doses_per_treatment"],
+        np.nan
+    )
+
+    general_stock = np.where(
+        results["general_stock"] > 0,
+        results["general_stock"] / results["doses_per_treatment"],
+        np.nan
+    )
+
     fig, ax = plt.subplots(figsize=(6, 3))
-    ax.plot(dates, results["stock"] / results["doses_per_treatment"], label="Stock", color="blue", linewidth=2, alpha=0.5)
-    ax.plot(dates, results["high_risk_stock"] / results["doses_per_treatment"], label="High-risk stock", color="red", linewidth=1)
-    ax.plot(dates, results["general_stock"] / results["doses_per_treatment"], label="General-use stock", color="green", linewidth=1)
+
+    ax.plot(dates, stock, label="Stock", color="blue", linewidth=2, alpha=0.5)
+    ax.plot(dates, high_risk_stock, label="High-risk stock", color="red", linewidth=1)
+    ax.plot(dates, general_stock, label="General-use stock", color="green", linewidth=1)
+
     ax.set_ylabel("Treatment courses in inventory")
     ax.set_title("Inventory")
     ax.legend(fontsize=7)
@@ -1323,18 +1129,56 @@ with tab_model:
     )    
     format_axes(ax)
     st.pyplot(fig, width="stretch")
+    plt.close(fig)
 
     # Flows (produced, delivered, discarded)
     show_general_delivered = st.toggle(
         "Show treatment courses delivered to general population",
         value=False)
     fig, ax = plt.subplots(figsize=(6, 3))
-    ax.plot(dates, results["daily_production"]/ results["doses_per_treatment"], label="Production", color="blue", linewidth=1, alpha=0.5)
-    # ax.plot(dates, results["daily_reserved_doses"] / results["doses_per_treatment"], label="Delivered", color="green", linewidth=1)
-    ax.plot(dates, results["daily_reserved_doses_high_risk"] / results["doses_per_treatment"], label="Delivered (high-risk)", color="orange", linewidth=0.7)
+    production = np.where(
+        results["daily_production"] > 0,
+        results["daily_production"] / results["doses_per_treatment"],
+        np.nan
+    )
+
+    delivered_hr = np.where(
+        results["daily_reserved_doses_high_risk"] > 0,
+        results["daily_reserved_doses_high_risk"] / results["doses_per_treatment"],
+        np.nan
+    )
+
+    delivered_general = np.where(
+        results["daily_reserved_doses_general"] > 0,
+        results["daily_reserved_doses_general"] / results["doses_per_treatment"],
+        np.nan
+    )
+
+    discarded = np.where(
+        results["discarded_doses"] > 0,
+        results["discarded_doses"] / results["doses_per_treatment"],
+        np.nan
+    )
+
+    ax.plot(dates, production, label="Production", color="blue", linewidth=1, alpha=0.5)
+    ax.plot(dates, delivered_hr, label="Delivered (high-risk)", color="orange", linewidth=0.7)
+
     if show_general_delivered:
-        ax.plot(dates, results["daily_reserved_doses_general"] / results["doses_per_treatment"], label="Delivered (general pop.)", color="gray", linewidth=0.7)
-    ax.plot(dates, results["discarded_doses"] / results["doses_per_treatment"], label="Discarded", color="red", linewidth=1)
+        ax.plot(
+            dates,
+            delivered_general,
+            label="Delivered (general pop.)",
+            color="gray",
+            linewidth=0.7
+        )
+
+    ax.plot(
+        dates,
+        discarded,
+        label="Discarded",
+        color="red",
+        linewidth=1
+    )
     ax.set_ylabel("Treatment courses/day")
     ax.legend(fontsize=7)
     ax.grid(alpha=0.3)
@@ -1386,6 +1230,7 @@ with tab_model:
         variant_changes
     )
     st.pyplot(fig, width="stretch")
+    plt.close(fig)
 
 
     # Stock by variant and eligibility
@@ -1455,7 +1300,7 @@ with tab_model:
     format_axes(ax)
 
     st.pyplot(fig, width="stretch")
-
+    plt.close(fig)
 
     # Delivered plasma age by day
     # y = plasma age
@@ -1598,6 +1443,7 @@ with tab_model:
         fig,
         width="stretch"
     )
+    plt.close(fig)
 
     # Coverage, efficacy and adoption
     fig, ax = plt.subplots(figsize=(6, 3))
@@ -1667,6 +1513,7 @@ with tab_model:
     )
     format_axes(ax)
     st.pyplot(fig, width="stretch")
+    plt.close(fig)
 
     # Relative inventory composition
     fig, ax = plt.subplots(figsize=(6, 3))
@@ -1712,6 +1559,7 @@ with tab_model:
     format_axes(ax)
 
     st.pyplot(fig, width="stretch")
+    plt.close(fig)
 
     # configs
     st.set_page_config(
@@ -1801,9 +1649,11 @@ with tab_sensitivity:
     st.subheader("Sensitivity Analysis")
 
     parameters_dict = { "Potential donor rate": [0.01, 1.0],
+                        "Initial CCP activity": [0.1, 1.0],
                         "High-risk usage activity threshold": [0.1, 0.6],
-                        "Max storage age": [90, 500],
-                        "Dose volume per nostril": [100, 600],
+                        "Minimum usable activity": [0.01, 0.5],
+                        "Max storage age": [30, 500],
+                        "Dose volume per nostril": [100/ 500000, 600/ 500000],
                         "Donations per donor": [1, 10],
                         "Maximum donations/day": [1, 450],
                         "Maximum adoption": [0.01, 1.00],
@@ -1820,20 +1670,45 @@ with tab_sensitivity:
     n_points = 20
     ranges = {
         parameter:
-            np.arange(int(low), int(high))
-            if parameter == "Donations per donor"
-            else np.linspace(low, high, n_points)
+            (
+                np.arange(
+                    int(low),
+                    int(high) + 1
+                )
+                if parameter == "Donations per donor"
+                else np.round(
+                    np.linspace(
+                        low,
+                        high,
+                        n_points
+                    )
+                ).astype(int)
+            )
+            if parameter in [
+                "Donations per donor",
+                "Max storage age",
+                "Start time",
+                "Rollout time"
+            ]
+            else np.linspace(
+                low,
+                high,
+                n_points
+            )
 
         for parameter, (low, high)
         in parameters_dict.items()
     }
+
     x_values = ranges[parameter]
     prevented = []
     general = []
     for value in x_values:
 
         test_potential_donor_rate = potential_donor_rate
+        test_initial_ccp_activity = initial_ccp_activity
         test_high_risk_use_threshold = high_risk_use_threshold
+        test_minimum_usable_activity = minimum_usable_activity
         test_max_storage_age = max_storage_age
         test_dose = dose_volume
         test_donations_per_donor = donations_per_donor
@@ -1845,18 +1720,24 @@ with tab_sensitivity:
         if parameter == "Potential donor rate":
             test_potential_donor_rate = value
 
+        elif parameter == "Initial CCP activity":
+                    test_initial_ccp_activity = value
+
         elif parameter == "High-risk usage activity threshold":
             test_high_risk_use_threshold = value
 
+        elif parameter == "Minimum usable activity":
+            test_minimum_usable_activity = value
+
         elif parameter == "Max storage age":
-            test_max_storage_age = int(value)
+            test_max_storage_age = value
 
         elif parameter == "Dose volume per nostril":
             # Convert µL per nostril to model units (L total dose)
-            test_dose = value / 500000
+            test_dose = value
 
         elif parameter == "Donations per donor":
-            test_donations_per_donor = int(value)
+            test_donations_per_donor = value
 
         elif parameter == "Maximum donations/day":
             test_capacity = value
@@ -1865,18 +1746,18 @@ with tab_sensitivity:
             test_A_max = value
 
         elif parameter == "Start time":
-            test_t_start = int(value)
+            test_t_start = value
 
         elif parameter == "Rollout time":
-            test_rollout = int(value)
+            test_rollout = value
 
         results_sens = run_model(
             H,
             I,
             variant_changes,
-            initial_ccp_activity=initial_ccp_activity,
+            initial_ccp_activity=test_initial_ccp_activity,
             high_risk_use_threshold=test_high_risk_use_threshold, #
-            minimum_usable_activity=minimum_usable_activity,
+            minimum_usable_activity=test_minimum_usable_activity,
             max_storage_age=test_max_storage_age, #
             A_max=test_A_max, #
             capacity_per_day=test_capacity, #
@@ -1892,7 +1773,8 @@ with tab_sensitivity:
             t_start=test_t_start,
             T_rollout=test_rollout,
             window_start=window_start,
-            window_end=window_end
+            window_end=window_end,
+            debug=False
         )
 
         prevented.append(
@@ -1900,46 +1782,42 @@ with tab_sensitivity:
         )
         general.append(np.sum(results_sens["general_patients"]))
 
-        
     fig, ax = plt.subplots(figsize=(6, 3))
-
     ax.plot(
         x_values,
         prevented,
         marker="o"
     )
-
     ax.set_xlabel(parameter)
-
     ax.set_ylabel(
         "Total hospitalizations prevented"
     )
-
     ax.set_title(
         f"Sensitivity to {parameter}"
     )
-
+    ax.set_xticks(x_values)
     ax.grid(alpha=0.3)
-
+    format_axes(ax, False)
     st.pyplot(fig, width="stretch")
+    plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(6, 3))
-
     ax.plot(
         x_values,
         general,
         marker="o"
     )
-
     ax.set_xlabel(parameter)
-
     ax.set_ylabel(
         "Total general population reached"
     )
 
+    ax.set_xticks(x_values)
     ax.grid(alpha=0.3)
-
+    format_axes(ax, False)
     st.pyplot(fig, width="stretch")
+    plt.close(fig)
+
 
     # ## Tornado plot analysis
     # baseline_results = run_model(

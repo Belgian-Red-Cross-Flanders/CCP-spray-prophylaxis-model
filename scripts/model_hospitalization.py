@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import model_methods
+import debug_methods
 
 def run_model(
     H,
@@ -123,8 +124,7 @@ def run_model(
         inventory = model_methods.update_inventory(
             inventory,
             daily_batches,
-            i,
-            debug=False
+            i
         )
 
         variant_today = model_methods.get_variant(variant_changes, i) # the COVID variant that the people treated today have
@@ -453,6 +453,29 @@ if __name__ == "__main__":
     I = df["CASES"].values
     # Peak hospitalizations (for normalization)
     H_peak = np.max(H)
+    # Hospitalizations
+    H_mean = np.mean(H)
+    H_max = np.max(H)
+    H_min = np.min(H)
+    H_std = np.std(H)
+
+    # Infections
+    I_mean = np.mean(I)
+    I_max = np.max(I)
+    I_min = np.min(I)
+    I_std = np.std(I)
+
+    print(f"Hospitalizations/day")
+    print(f"  Mean: {H_mean:.1f}")
+    print(f"  Max : {H_max:.0f}")
+    print(f"  Min : {H_min:.0f}")
+    print(f"  Std : {H_std:.1f}")
+
+    print(f"\nInfections/day")
+    print(f"  Mean: {I_mean:.1f}")
+    print(f"  Max : {I_max:.0f}")
+    print(f"  Min : {I_min:.0f}")
+    print(f"  Std : {I_std:.1f}")
     #endregion
 
 
@@ -482,12 +505,12 @@ if __name__ == "__main__":
         key=lambda x: x["day"]
     )
 
-    results = run_model(
-        H=H,
-        I=I,
-        variant_changes = variant_changes,
-        debug=False
-    )
+    # results = run_model(
+    #     H=H,
+    #     I=I,
+    #     variant_changes = variant_changes,
+    #     debug=False
+    # )
     
     # donation_window_start = 30
     # donation_window_end = 180
@@ -518,7 +541,7 @@ if __name__ == "__main__":
     #         }
     #     }
 
-    # debug_donation_schedule(
+    # debug_methods.debug_donation_schedule(
     #     donation_window_start,
     #     donation_window_end,
     #     min_donation_interval,

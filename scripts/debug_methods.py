@@ -3,6 +3,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 import matplotlib.dates as mdates
+import model_methods
+from matplotlib.lines import Line2D
 
 
 # Debug output directory
@@ -180,7 +182,8 @@ def debug_donation_schedule(
     variant_changes,
     cross_neutralization,
     high_risk_threshold=0.40,
-    minimum_usable_activity=0.05
+    minimum_usable_activity=0.05,
+    max_storage_age=365
 ):
 
     fig, ax = plt.subplots(
@@ -255,14 +258,19 @@ def debug_donation_schedule(
         "Omicron": "tab:purple"
     }
 
+    # distinct linestyles to tell apart the multiple donations
+    # collected from the same representative donor
+    donation_linestyles = ["-", "-", "-", "-"] #["-", "--", ":", "-."]
+    donation_thicknesses = [1,3,6]
+
     for infection_day in representative_infections:
 
-        donor_variant = get_variant(
+        donor_variant = model_methods.get_variant(
             variant_changes,
             infection_day
         )
 
-        donation_days = build_donation_schedule(
+        donation_days = model_methods.build_donation_schedule(
             infection_day,
             donations_per_donor,
             min_donation_interval,
@@ -271,49 +279,111 @@ def debug_donation_schedule(
             variant_changes
         )
 
-        activities = []
+        for donation_idx, donation_day in enumerate(donation_days):
 
-        for donation_day in donation_days:
-
-            treatment_end_day = (
-                donation_day
-                + 90
+            # Sweep every possible "day of use" for this batch, from the
+            # moment it's donated until it would hit storage expiry (or
+            # the end of the simulation window, whichever comes first).
+            # This shows how a single donated batch's activity would
+            # change depending on which variant is circulating on the
+            # day it actually gets used, rather than a single fixed
+            # immediate-use or +90-day projection.
+            last_use_day = min(
+                donation_day + max_storage_age,
+                simulation_end
             )
 
-            target_variant = get_variant(
-                variant_changes,
-                treatment_end_day
+            use_days = list(
+                range(donation_day, last_use_day + 1)
             )
 
-            multiplier = (
-                cross_neutralization
-                .get(donor_variant, {})
-                .get(target_variant, 1.0)
-            )
+            activities = []
 
-            projected_activity = (
-                initial_ccp_activity
-                * multiplier
-            )
+            for use_day in use_days:
 
-            activities.append(
-                projected_activity
-            )
+                target_variant = model_methods.get_variant(
+                    variant_changes,
+                    use_day
+                )
 
-        ax.plot(
-            donation_days,
-            activities,
-            "-o",
-            linewidth=2,
-            label=(
+                multiplier = (
+                    cross_neutralization
+                    .get(donor_variant, {})
+                    .get(target_variant, 1.0)
+                )
+
+                activities.append(
+                    initial_ccp_activity * multiplier
+                )
+
+            linestyle = donation_linestyles[
+                donation_idx % len(donation_linestyles)
+            ]
+
+            thickness = donation_thicknesses[donation_idx % len(donation_thicknesses)]
+
+            label = (
                 f"{donor_variant} donor "
-                f"(infection day {infection_day})"
-            ),
-            color=donor_colors.get(
-                donor_variant,
-                "black"
+                f"(infection day {infection_day}, "
+                f"donation {donation_idx + 1})"
             )
-        )
+
+            ax.plot(
+                use_days,
+                activities,
+                linestyle,
+                linewidth=thickness,
+                label=label,
+                color=donor_colors.get(
+                    donor_variant,
+                    "black"
+                ),
+                alpha=0.3
+            )
+
+            # marker at the moment of donation (start of the curve)
+            ax.scatter(
+                donation_day,
+                activities[0],
+                marker="o",
+                s=25,
+                color=donor_colors.get(
+                    donor_variant,
+                    "black"
+                ),
+                zorder=5
+            )
+
+            ax.annotate(
+                f"D{donation_idx + 1}",
+                (donation_day, activities[0]),
+                xytext=(0, 8),
+                textcoords="offset points",
+                ha="center",
+                fontsize=6
+            )
+
+            # # annotate activity only where it actually changes
+            # # (i.e. at the start, and right after each drop)
+            # ax.annotate(
+            #     f"{activities[0]:.2f}",
+            #     (use_days[0], activities[0]),
+            #     xytext=(0, 8),
+            #     textcoords="offset points",
+            #     ha="center",
+            #     fontsize=6
+            # )
+
+            # for i in range(1, len(activities)):
+            #     if activities[i] != activities[i - 1]:
+            #         ax.annotate(
+            #             f"{activities[i]:.2f}",
+            #             (use_days[i], activities[i]),
+            #             xytext=(0, 8),
+            #             textcoords="offset points",
+            #             ha="center",
+            #             fontsize=6
+            #         )
 
         # infection marker
         ax.scatter(
@@ -321,23 +391,14 @@ def debug_donation_schedule(
             initial_ccp_activity,
             marker="X",
             s=80,
-            color="black",
-            zorder=5
+            color=donor_colors.get(
+                donor_variant,
+                "black"
+            ),
+            edgecolor="black",
+            linewidth=0.5,
+            zorder=6
         )
-
-        for day, activity in zip(
-            donation_days,
-            activities
-        ):
-
-            ax.annotate(
-                f"{activity:.2f}",
-                (day, activity),
-                xytext=(0, 8),
-                textcoords="offset points",
-                ha="center",
-                fontsize=6
-            )
 
     # --------------------------------------------------
     # Variant transitions
@@ -360,20 +421,23 @@ def debug_donation_schedule(
         initial_ccp_activity,
         color="black",
         linestyle=":",
-        label="Initial activity (0.70)"
+        label="Initial activity (0.70)",
+        alpha=0.5
     )
 
     ax.axhline(
         high_risk_threshold,
-        color="orange",
-        linestyle="--",
-        label=f"High-risk threshold ({high_risk_threshold:.2f})"
+        color="green",
+        linestyle=":",
+        label=f"High-risk threshold ({high_risk_threshold:.2f})",
+        alpha=0.5
     )
 
     ax.axhline(
         minimum_usable_activity,
         color="red",
-        linestyle=":"
+        linestyle=":",
+        alpha=0.5
     )
 
     # --------------------------------------------------
@@ -381,15 +445,15 @@ def debug_donation_schedule(
     # --------------------------------------------------
 
     ax.set_title(
-        "Projected end-of-treatment activity of representative donors"
+        "Projected activity by day of use, per donated batch"
     )
 
     ax.set_xlabel(
-        "Simulation day"
+        "Simulation day (day of use)"
     )
 
     ax.set_ylabel(
-        "Projected end-of-treatment activity"
+        "Projected activity"
     )
 
     ax.set_ylim(
@@ -401,8 +465,42 @@ def debug_donation_schedule(
         alpha=0.3
     )
 
+    custom_handles = [
+
+        # LEFT COLUMN
+        Line2D([], [], marker="X", color="black",
+            linestyle="None", markersize=6,
+            label="Infection"),
+
+        Line2D([], [], marker="o", color="black",
+            linestyle="None", markersize=5,
+            label="Donation (D)"),
+
+        Line2D([], [], linestyle="None",
+            label=""),
+
+        # RIGHT COLUMN
+        Line2D([], [], color="black",
+            linestyle=":",
+            linewidth=1,
+            label="Initial activity"),
+
+        Line2D([], [], color="green",
+            linestyle=":",
+            linewidth=1,
+            label="High-risk threshold"),
+
+        Line2D([], [], color="red",
+            linestyle=":",
+            linewidth=1,
+            label="Minimum usable activity")
+    ]
+
     ax.legend(
-        fontsize=7
+        handles=custom_handles,
+        ncol=2,
+        fontsize=7,
+        loc="upper right"
     )
 
     plt.tight_layout()

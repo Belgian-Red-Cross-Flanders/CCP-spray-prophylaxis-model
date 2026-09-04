@@ -264,8 +264,7 @@ def calculate_daily_batches(
 def update_inventory(
     inventory,
     daily_batches,
-    day,
-    debug=False
+    day
 ):
     # Age batches and add new batches.
 
@@ -354,19 +353,19 @@ def classify_inventory(
 
         donor_variant = batch["donor_variant"]
 
-        future_activity = batch["activity"] * cross_neutralization[donor_variant][variant_today]
+        deploy_activity = batch["activity"] * cross_neutralization[donor_variant][variant_today]
 
-        batch["future_activity"] = future_activity
+        batch["deploy_activity"] = deploy_activity
 
         if (
-            batch["future_activity"]
+            batch["deploy_activity"]
             >= high_risk_use_threshold
         ):
             batch["treatment_class"] = "high_risk"
             surviving_inventory.append(batch)
 
         elif (
-            batch["future_activity"]
+            batch["deploy_activity"]
             >= minimum_usable_activity
         ):
             batch["treatment_class"] = "general"
@@ -426,14 +425,14 @@ def match_fifo_allocate_patients(
     effective_treatments = 0
     doses_age = []
 
-    # Prioritize best-matched (highest future_activity) batches first, so
+    # Prioritize best-matched (highest deploy_activity) batches first, so
     # a patient draws the most cross-neutralization-matched stock before
     # older, worse-matched stock that merely still clears the threshold.
     # Age is only a tiebreaker among equally-matched batches, to keep
     # FIFO-style waste control within a match tier.
     candidates = sorted(
         (batch for batch in inventory if batch["treatment_class"] == treatment_class),
-        key=lambda b: (-b["future_activity"], -b["age"])
+        key=lambda b: (-b["deploy_activity"], -b["age"])
     )
 
     for batch in candidates:
@@ -448,7 +447,7 @@ def match_fifo_allocate_patients(
 
         effective_treatments += (
             take
-            * batch["future_activity"]
+            * batch["deploy_activity"]
         )
 
         batch["doses"] -= take
@@ -526,7 +525,7 @@ def fifo_allocate_patients(
 
         effective_treatments += (
             take
-            * batch["future_activity"]
+            * batch["deploy_activity"]
         )
 
         batch["doses"] -= take

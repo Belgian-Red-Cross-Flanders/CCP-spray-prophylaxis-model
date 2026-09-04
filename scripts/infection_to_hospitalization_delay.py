@@ -42,11 +42,28 @@ H_peak = np.max(H)
 I_centered = I - np.mean(I)
 H_centered = H - np.mean(H)
 
-corr = correlate(H_centered, I_centered, mode="full")
+corr = correlate(
+    H_centered,
+    I_centered,
+    mode="full"
+)
+
+corr = corr / (
+    np.std(I)
+    * np.std(H)
+    * len(I)
+)
+
+best_corr = corr[np.argmax(corr)]
 
 lags = np.arange(-len(I) + 1, len(I))
 
 best_lag = lags[np.argmax(corr)]
+
+r = np.corrcoef(
+    I[:-best_lag],
+    H[best_lag:]
+)[0,1]
 
 print(f"Estimated infection→hospitalization delay = {best_lag} days")
 
@@ -64,6 +81,7 @@ ax.axvline(
 ax.legend()
 ax.set_xlabel("Lag (days)")
 ax.set_ylabel("Correlation")
+# ax.set_xlim(-30, 30)
 
 plt.show()
 
@@ -71,14 +89,14 @@ plt.figure(figsize=(10,4))
 
 
 plt.plot(
-    dates[7:],
-    I_ori[:-7] / np.nanmax(I_ori),
+    dates[tmp.index][7:],
+    I[:-7] / np.nanmax(I),
     label="Cases shifted +7d"
 )
 
 plt.plot(
-    dates,
-    H_ori / np.nanmax(H_ori),
+    dates[tmp.index],
+    H / np.nanmax(H),
     label="Hospitalizations"
 )
 
