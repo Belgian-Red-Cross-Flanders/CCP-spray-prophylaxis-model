@@ -91,6 +91,34 @@ for full_name in omicron_glossary:
         display_names[short_name] = full_name
 
 # ------------------------------------------------------------------------------
+# Find first appearance date of each variant
+# ------------------------------------------------------------------------------
+
+variant_start_dates = []
+
+for variant in variants_to_plot:
+
+    d = (
+        df.loc[df["variant"] == variant]
+        .sort_values("date")
+    )
+
+    # First date with measurable presence
+    started = d.loc[d["ma_variant_perc_14d"] > 0]
+
+    if len(started):
+
+        first_date = started["date"].iloc[0]
+
+        variant_start_dates.append(
+            (variant, first_date)
+        )
+
+print("\nVariant introduction dates:")
+for variant, date in variant_start_dates:
+    print(f"{variant:15s} : {date.date()}")
+    
+# ------------------------------------------------------------------------------
 # Find dominance transitions
 # ------------------------------------------------------------------------------
 

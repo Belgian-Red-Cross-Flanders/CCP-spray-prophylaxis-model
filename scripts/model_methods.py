@@ -281,9 +281,11 @@ def update_inventory(
                 "activity": batch["activity"],
                 "donor_variant": batch["donor_variant"],
                 "donation_day": day,
-                "treatment_class": None
+                "treatment_class": None,
+                "reserve": False
             }
         )
+
 
     return inventory
 
@@ -397,15 +399,24 @@ def summarize_inventory(
         general_stock
     )
 
-def match_fifo_allocate_patients(
+def match_fifo_allocate_high_risk(
     inventory,
     requested_patients,
     doses_per_treatment,
     available_stock,
-    treatment_class,
     variant_today
 ):
+    # Prioritize best-matched (highest deploy_activity) batches first, so
+    # a patient draws the most cross-neutralization-matched stock before
+    # older, worse-matched stock that merely still clears the threshold.
+    # Age is only a tiebreaker among equally-matched batches, to keep
+    # FIFO-style waste control within a match tier.
+    candidates = sorted(
+        (batch for batch in inventory if batch["treatment_class"] == "high_risk"),
+        key=lambda b: (-b["deploy_activity"], -b["age"])
+    )
 
+    # Capacity calculation
     max_new_patients = (
         available_stock
         / doses_per_treatment
@@ -425,16 +436,98 @@ def match_fifo_allocate_patients(
     effective_treatments = 0
     doses_age = []
 
-    # Prioritize best-matched (highest deploy_activity) batches first, so
-    # a patient draws the most cross-neutralization-matched stock before
-    # older, worse-matched stock that merely still clears the threshold.
-    # Age is only a tiebreaker among equally-matched batches, to keep
-    # FIFO-style waste control within a match tier.
-    candidates = sorted(
-        (batch for batch in inventory if batch["treatment_class"] == treatment_class),
-        key=lambda b: (-b["deploy_activity"], -b["age"])
+    # Allocation
+    for batch in candidates:
+        if remaining <= 0:
+            break
+
+        take = min(
+            batch["doses"],
+            remaining
+        )
+        effective_treatments += (
+            take
+            * batch["deploy_activity"]
+        )
+
+        batch["doses"] -= take
+        remaining -= take
+
+        doses_age.append({"doses":take, "age":batch["age"], "deploy_activity":batch["deploy_activity"], "donor_variant":batch["donor_variant"], "patient_variant":variant_today})
+    
+    allocated_doses = (
+        doses_needed - remaining
     )
 
+    new_patients = (
+        allocated_doses
+        / doses_per_treatment
+    )
+
+    if allocated_doses > 0:
+        mean_treatment_activity = (
+            effective_treatments
+            / allocated_doses
+        )
+    else:
+        mean_treatment_activity = 0
+
+    return (
+        inventory,
+        new_patients,
+        max_new_patients,
+        allocated_doses,
+        mean_treatment_activity,
+        doses_age)
+
+
+def match_fifo_allocate_general(
+    inventory,
+    general_requested_patients,
+    doses_per_treatment,
+    high_risk_stock,
+    general_stock,
+    variant_today,
+    hr_stock_request_rate,
+    release_threshold,
+    release_fraction
+):
+    # Batches that are already set aside for general
+    general_candidates = [batch for batch in inventory
+                if batch["treatment_class"] == "general"]
+    # High-risk doses that we can release from the inventory if the high-risk request rate is below the release threshold
+    # This means that the doses requested today are this much lower than the stock that exists today
+    high_risk_candidates =[]
+    released_high_risk_stock = 0
+    if hr_stock_request_rate < release_threshold:
+
+        high_risk_candidates = [
+            batch
+            for batch in inventory
+            if batch["treatment_class"] == "high_risk"
+            ]
+
+        released_high_risk_stock = (release_fraction * high_risk_stock)
+
+    # Still try to offer the oldest first, so sort by age
+    candidates = sorted(
+        general_candidates+high_risk_candidates,
+        key=lambda b: (-b["deploy_activity"], -b["age"])
+        )
+
+    # Capacity calculation
+    available_to_general = (general_stock + released_high_risk_stock)
+    max_new_patients = (available_to_general / doses_per_treatment)
+    requested_starts = min(general_requested_patients,max_new_patients)
+    doses_needed = (requested_starts * doses_per_treatment)
+    remaining = doses_needed
+    effective_treatments = 0
+    doses_age = []
+
+    # Budget of released high-risk stock
+    remaining_release = released_high_risk_stock
+
+    # Allocation
     for batch in candidates:
 
         if remaining <= 0:
@@ -445,6 +538,14 @@ def match_fifo_allocate_patients(
             remaining
         )
 
+        # High-risk stock can only be consumed within the released quota
+        if batch["treatment_class"] == "high_risk":
+            take = min(take, remaining_release)
+            remaining_release -= take
+
+        if take <= 0:
+            continue
+
         effective_treatments += (
             take
             * batch["deploy_activity"]
@@ -453,22 +554,26 @@ def match_fifo_allocate_patients(
         batch["doses"] -= take
         remaining -= take
 
-        doses_age.append({"doses":take, "age":batch["age"], "donor_variant":batch["donor_variant"], "patient_variant":variant_today})
+        # # Reclassify consumed high-risk stock
+        # if (batch["treatment_class"] == "high_risk"):
+        #     batch["treatment_class"] = "general"
+
+        doses_age.append({"doses":take, "age":batch["age"], "deploy_activity":batch["deploy_activity"], "donor_variant":batch["donor_variant"], "patient_variant":variant_today})
     
-    actual_doses_reserved = (
+    allocated_doses = (
         doses_needed - remaining
     )
 
     new_patients = (
-        actual_doses_reserved
+        allocated_doses
         / doses_per_treatment
     )
 
-    if actual_doses_reserved > 0:
+    if allocated_doses > 0:
 
         mean_treatment_activity = (
             effective_treatments
-            / actual_doses_reserved
+            / allocated_doses
         )
 
     else:
@@ -479,7 +584,7 @@ def match_fifo_allocate_patients(
         inventory,
         new_patients,
         max_new_patients,
-        actual_doses_reserved,
+        allocated_doses,
         mean_treatment_activity,
         doses_age)
 

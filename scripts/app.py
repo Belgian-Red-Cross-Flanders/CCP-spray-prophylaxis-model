@@ -9,77 +9,72 @@ from model_hospitalization import run_model, summarize_results
 
 
 # HOW TO RUN: & "C:\Users\MCASTRO\AppData\Local\Python\pythoncore-3.14-64\python.exe" -m streamlit run scripts/app.py   
-# OPTIMAL PARAMETERS (DIFFERENTIAL EVOLUTION OPTIMIZER) RERUN
-## LOAD + ALIGN DATA
-#region
-df_hosp = pd.read_csv("data_processed/hospitalizations_clean.csv")
-df_cases = pd.read_csv("data_processed/cases_clean.csv")
-
-df_hosp["DATE"] = pd.to_datetime(df_hosp["DATE"])
-df_cases["DATE"] = pd.to_datetime(df_cases["DATE"])
-
-# Merge on DATE (inner join keeps only common dates)
-df = pd.merge(df_hosp, df_cases, on="DATE", how="inner")
-
-# Sort just in case
-df = df.sort_values("DATE")
-
-# Extract aligned series
-dates = df["DATE"]
-H_ori = df["NEW_IN"].values
-I_ori = df["CASES"].values
-
-variant_changes = []
-
-variant_dates = {
-    "Alpha": "2020-12-15",
-    "Delta": "2021-06-29",
-    "Omicron": "2021-12-31"
-}
-
-for variant, date_str in variant_dates.items():
-
-    day = (
-        pd.Timestamp(date_str)
-        - pd.Timestamp(dates.iloc[0])
-    ).days
-
-    variant_changes.append({
-        "day": day,
-        "name": variant
-    })
-
-delay_inf_to_hosp = 7 # 7 days according to cross-correlation between hospitalizations and infections
-
-#endregion
-
-## BASIC PARAMETERS (commented)
-#region
-
-## Supply constants ##
-# From Elise: 3 donations × 500 mL = 1.5 L per donor
-# Total doses = total plasma volume / dose volume
-# current spray = 600 µL per nostril = 1.2 mL per dose 
-# (600 is the value for the current safety study, but then they need to assess volumes)
-# 1.5 L / 0.0012 L ≈ 1250 doses per donor
-# treatment: 2 doses/day for 3 months (≈90 days) (so 180 doses per patient)
-# patients_per_donor ≈ 1250 / 180 ≈ 7 people
-
-# dose_volume = 0.0012 # 600 µL per nostril = 1.2 mL per dose 
-# how many donations we consider (1 to 3)
-# donations_per_donor = 1
-# doses_per_patient_per_day = 2
-# treatment_duration = 90  # days
-
-# Donor rate (% of the recovered that actually donate)
-# potential_donor_rate = 0.1  # 10% of recovered donate (in Belgium - Elise was using Flanders)
-# over_titre_donor_rate = 0.2 # 20% of the donors have antibody titres above 20 µg/mL (the threshold used for CP in our hamster study; see the EBioMedicine paper). 
-# This estimate is based on donor data from the Meuri & Confident studies in 2021 (approximately n = 70).
-
-#endregion
 
 ## FUNCTIONS
 #region
+def load_scaled_covid(
+    hosp_path = "data_processed/hospitalizations_clean.csv",
+    cases_path = "data_processed/cases_clean.csv",
+    infection_multiplier = 1.0,
+    hospitalization_multiplier = 1.0,
+):
+    """
+    Current approach:
+    scale infections and severity relative to COVID.
+    """
+    df_hosp = pd.read_csv(hosp_path)
+    df_cases = pd.read_csv(cases_path)
+
+    df_hosp["DATE"] = pd.to_datetime(df_hosp["DATE"])
+    df_cases["DATE"] = pd.to_datetime(df_cases["DATE"])
+
+    # Merge on DATE (inner join keeps only common dates)
+    df = pd.merge(df_hosp, df_cases, on="DATE", how="inner")
+
+    # Sort just in case
+    df = df.sort_values("DATE")
+
+    # Extract aligned series
+    dates = df["DATE"]
+    H_ori = df["NEW_IN"].values
+    I_ori = df["CASES"].values
+
+    I = infection_multiplier * I_ori
+
+    hospitalization_rate = H_ori / I_ori
+
+    H = (
+        I
+        * hospitalization_multiplier
+        * hospitalization_rate
+    )
+
+    return I, H, dates
+
+def load_covasim_pandemic(
+    covasim_file
+):
+    """
+    Load Covasim-generated pandemic.
+    """
+
+    df = pd.read_csv(
+        covasim_file,
+        parse_dates=["date"],
+    )
+
+    I = (
+        df["infections"].to_numpy()
+    )
+
+    H = (
+        df["hospitalizations"].to_numpy()
+    )
+
+    dates = pd.to_datetime(df["date"])
+
+    return I, H, dates
+
 def add_variant_lines(ax, start_date, variant_changes):
     """
     Draw vertical lines marking variant transitions.
@@ -130,6 +125,7 @@ def add_variant_lines(ax, start_date, variant_changes):
             fontsize=5,
             alpha=0.5
         )
+
 def smart_format(x, pos):
     if abs(x) >= 1000:
         return f"{x:,.0f}"
@@ -137,7 +133,6 @@ def smart_format(x, pos):
         return f"{x:.0f}"
     else:
         return f"{x:.2f}"
-
 
 def format_axes(ax, months=True):
 
@@ -197,40 +192,74 @@ tab_pandemic, tab_model, tab_sensitivity = st.tabs(
 with tab_pandemic:
     # change the pandemic here (infections, hospitalizations, variant appearance and cross-neutralization can also be here)
     st.header("Pandemic scenario")
-    st.subheader("(relative to observed COVID-19 pandemic in Belgium)")
-    infection_multiplier = st.slider(
-        "Infection multiplier",
-        min_value=1.0,
-        max_value=10.0,
-        value=1.0,
-        step=0.5
-    )
-    hospitalization_multiplier = st.slider(
-        "Hospitalization multiplier (severity - hospitalization risk of respiratory pandemic).",
-        min_value=1.0,
-        max_value=10.0,
-        value=1.0,
-        step=0.5
-    )
+    pandemic_source = st.radio(
+        "Pandemic source",
+        [
+            "COVID-19 (possible scaling)",
+            "Covasim pandemic"
+        ],
+        horizontal=True,
+        )
 
-    I = (
-        infection_multiplier
-        * I_ori
-    )
+    if pandemic_source == "COVID-19 (possible scaling)":
+        st.markdown("###### (relative to observed COVID-19 pandemic in Belgium)")
+        infection_multiplier = st.slider(
+            "Infection multiplier",
+            min_value=1.0,
+            max_value=10.0,
+            value=1.0,
+            step=0.5
+        )
+        hospitalization_multiplier = st.slider(
+            "Hospitalization multiplier (severity - hospitalization risk of respiratory pandemic).",
+            min_value=1.0,
+            max_value=10.0,
+            value=1.0,
+            step=0.5
+        )
 
-    hospitalization_rate = H_ori / I_ori
+        I, H, dates = load_scaled_covid(
+            "data_processed/hospitalizations_clean.csv",
+            "data_processed/cases_clean.csv",
+            infection_multiplier,
+            hospitalization_multiplier,
+        )
 
-    H = (
-        I
-        * hospitalization_multiplier
-        * hospitalization_rate
-    )
+        delay_inf_to_hosp = 7 # 7 days according to cross-correlation between hospitalizations and infections
+
+
+    else:
+        st.markdown("###### (same population and demographics as Belgium, no treatments or containment measures)")
+        I, H, dates = load_covasim_pandemic(
+            "data_processed/covasim_belgium_unmitigated.csv",
+        )
+
+        delay_inf_to_hosp = 11 # 11 days according to cross-correlation between hospitalizations and infections
+
+    variant_changes = []
+
+    variant_dates = {
+        "Alpha": "2021-02-20",
+        "Delta": "2021-06-29",
+        "Omicron": "2021-12-31"
+    }
+
+    for variant, date_str in variant_dates.items():
+
+        day = (
+            pd.Timestamp(date_str)
+            - pd.Timestamp(dates.iloc[0])
+        ).days
+
+        variant_changes.append({
+            "day": day,
+            "name": variant
+        })
+
 
     # PLOTS
     #region
-    show_covid = st.toggle(
-    "Show COVID-19",
-    value=True)
+
     fig, ax = plt.subplots(figsize=(6, 3))
     # Infections 
     ax.plot(
@@ -243,17 +272,7 @@ with tab_pandemic:
     ax.set_ylabel(
         "New infections/day"
     )
-    if show_covid:       
-        ax.plot(
-            dates,
-            I_ori,
-            label="COVID-19",
-            color="red",
-            linewidth=1,
-            alpha=0.8
-        )
 
-    # Combine legends
     ax.legend(loc='upper right', fontsize=7)
     ax.grid(alpha=0.3)
     add_variant_lines(
@@ -277,15 +296,6 @@ with tab_pandemic:
     ax.set_ylabel(
         "Hospital admissions/day"
     )
-    if show_covid:       
-        ax.plot(
-            dates,
-            H_ori,
-            label="COVID-19",
-            color="red",
-            linewidth=1,
-            alpha=0.8
-        )
     # Combine legends
     ax.legend(loc='upper right', fontsize=7)
     ax.grid(alpha=0.3)
@@ -336,9 +346,9 @@ with tab_model:
     max_storage_age = st.sidebar.slider(
         "Max storage age",
         min_value=90,
-        max_value=500,
-        value=365,
-        step=5
+        max_value=800,
+        value=730,
+        step=10
     )
 
     # ---------
@@ -391,11 +401,26 @@ with tab_model:
     donation_interval = int(st.sidebar.text_input("Minimum interval between donations", 14)) # 2 weeks between donations
     capacity_per_day = st.sidebar.slider(
         "Maximum donations/day",
-        min_value=1,
-        max_value=450,
+        min_value=10,
+        max_value=1000,
         value=100,
-        step=1
+        step=10
     )
+    release_threshold = st.sidebar.slider(
+        "Release threshold (on high-risk requested/stock rate)",
+        min_value=0.0,
+        max_value=1.0,
+        value=0.05,
+        step=0.05
+    )
+    release_fraction = st.sidebar.slider(
+        "Release fraction (release to general if under release_threshold)",
+        min_value=0.0,
+        max_value=1.0,
+        value=0.05,
+        step=0.05
+    )
+
     # ---------
     st.sidebar.subheader(
         "Adoption/implementation"
@@ -423,6 +448,8 @@ with tab_model:
         max_storage_age = max_storage_age,
         A_max=A_max,
         capacity_per_day=capacity_per_day,
+        release_threshold=release_threshold,
+        release_fraction=release_fraction,
         treatment_duration=treatment_duration,
         potential_donor_rate=potential_donor_rate,
         over_titre_donor_rate=over_titre_donor_rate,
@@ -459,7 +486,7 @@ with tab_model:
 
     ---
 
-    ### Infection-to-hospitalization delay - 7 days (fixed)
+    ### Infection-to-hospitalization delay - 7 days for Belgium data, 11 days for simulated data (fixed)
     Average delay between infection and potential hospitalization. 
     
     Coverage is shifted forward by this number of days when estimating effects on hospital admissions.
@@ -604,6 +631,31 @@ with tab_model:
                     
     ---
 
+    ### Release threshold
+    Minimum high-risk stock request rate below whcich a fraction of the high-risk inventory becomes available for allocation to the general population.
+
+    The high-risk stock rate is calculated as:
+
+    High-risk doses requested today/
+    Current high-risk inventory
+    
+
+    A low value indicates that the current high-risk inventory substantially exceeds today's expected high-risk demand.
+    Example:
+    - 0.05 = release is activated when today's high-risk demand represents less than 5% of the available high-risk stock.
+
+    ---
+    
+    ### Release fraction
+    Fraction of the current high-risk inventory that may be allocated (today) to the general population when the release threshold condition is met.
+
+    This parameter does not affect stock already classified as general-use stock.
+
+    Example:
+    - 0.05 = up to 5% of the high-risk inventory becomes available for general-population allocation when high-risk demand is sufficiently low (below release threshold).
+
+    ---
+
     ### Inventory classes
     Stored plasma is classified into:
 
@@ -615,6 +667,10 @@ with tab_model:
 
     Expired stock
     - Projected treatment activity below the expiry threshold and removed from inventory.
+
+    Released high-risk stock
+    - High-risk inventory temporarily made available to the general population when the high-risk stock request rate falls below the release threshold.
+    - Released stock retains its original activity and variant-matching characteristics.
                     
     ---
 
@@ -652,12 +708,11 @@ with tab_model:
     ---
 
     ### Effective coverage
-    Activity-adjusted coverage.
+    Activity-adjusted fraction of the high-risk population receiving prophylaxis.
 
-    Effective coverage =
-    coverage × treatment activity \n
+    Patients treated with higher-activity plasma contribute more to effective coverage than patients treated with lower-activity plasma.
 
-    This quantity is used to estimate hospitalization reduction.
+    Effective coverage is used to estimate the reduction in hospitalization burden.
 
     ---
 
@@ -717,7 +772,7 @@ with tab_model:
     fig, ax = plt.subplots(figsize=(6, 3))
     # Hospitalizations reduction (main plot)
     show_infections = st.toggle(
-    "Show infections instead of % reduction",
+    "Show infections",
     value=False)
     H_ccp_plot = np.where(
         results["coverage"] > 0,
@@ -728,19 +783,21 @@ with tab_model:
         dates,
         H,
         label="Hospitalizations",
-        color="black"
+        color="black",
+        linewidth=0.5
     )
     ax.plot(
         dates,
         H_ccp_plot,
         label="With CCP",
-        color="blue"
+        color="blue",
+        linewidth=0.5
     )
     ax.set_ylabel(
         "Hospital admissions/day"
     )
-    ax2 = ax.twinx()
-    if show_infections:       
+    if show_infections:  
+        ax2 = ax.twinx()     
         ax2.fill_between(
             dates,
             0,
@@ -749,26 +806,15 @@ with tab_model:
             alpha=0.15
         )
         ax2.set_ylabel("Infections/day")
-    else:
-        ax2.plot(
-            dates,
-            results["H_reduction_pct"],
-            label="% reduction",
-            color="red",
-            linestyle="--",
-            linewidth=1,
-            alpha=0.5
-        )
-        ax2.set_ylabel(
-            "% reduction"
-        )
-    # Combine legends
-    lines, labels = ax.get_legend_handles_labels()
-    lines2, labels2 = ax2.get_legend_handles_labels()
-    ax.legend(handles=lines + lines2, labels=labels + labels2, loc='center right', fontsize=7)
+
+        # Combine legends
+        lines, labels = ax.get_legend_handles_labels()
+        lines2, labels2 = ax2.get_legend_handles_labels()
+        ax.legend(handles=lines + lines2, labels=labels + labels2, loc='center right', fontsize=7)
+        format_axes(ax2)
+    ax.legend(loc='center right', fontsize=7)
     ax.grid(alpha=0.3)
     format_axes(ax)
-    format_axes(ax2)
     st.pyplot(fig, width="stretch")
     plt.close(fig)
 
@@ -1048,42 +1094,35 @@ with tab_model:
     plt.close(fig)
 
     # Donations per day
-    ymax = 600
-    potential = np.minimum(results["daily_potential_donations"], ymax)
+    total_belgium_plasma_capacity = 1000 # a maximum of 1000 donations per day in all plasma
+    potential_pct = (np.array(results["daily_potential_donations"])/total_belgium_plasma_capacity * 100)
+    donations_pct = (np.array(results["daily_donations"])/total_belgium_plasma_capacity * 100)
+    capacity_pct = (capacity_per_day/total_belgium_plasma_capacity * 100)
     fig, ax = plt.subplots(figsize=(6, 3))
-    ax.plot(dates, potential, label="Potential donors (willing and over-titer)", color="orange", 
-            linewidth=0.8, alpha=0.5)
-    ax.axhline(y=np.mean(np.array(results["daily_potential_donations"])), color="brown",
-             linestyle="--", linewidth=0.6, 
-             label="Average potential donors")
-    ax.plot(dates, results["daily_donations"], 
+    ax.bar(dates, potential_pct, label="Potential donations (willing and over-titer)", color="orange", 
+            width=0.3, alpha=0.5)
+    # ax.axhline(y=np.mean(potential_pct), color="brown",
+    #          linestyle="--", linewidth=0.6, 
+    #          label="Average potential donations")
+    ax.bar(dates, donations_pct, 
             label="Donations (capped by capacity)", color="green", 
-            linewidth=0.8, alpha=0.8)
-    ax.axhline(y=np.mean(results["daily_donations"]), color="blue",
-            linestyle="--", linewidth=0.6, 
-            label="Average donations")
+            width=0.3, alpha=0.8)
+    # ax.axhline(y=np.mean(donations_pct), color="blue",
+    #         linestyle="--", linewidth=0.6, 
+    #         label="Average donations")
     ax.axhline(
-        y=capacity_per_day,
+        y=capacity_pct,
         color="red",
         linestyle="--",
         linewidth=0.4,
-        label="Capacity per day"
+        label="CCP collection capacity"
     )
-    #mark days where potential exceeds ymax
-    mask = results["daily_potential_donations"] > potential
-    ax.scatter(
-        np.array(dates)[mask],
-        np.full(mask.sum(), ymax),
-        marker="^",
-        color="orange",
-        s=2,
-        label=f">{ymax}"
-    )
-    ax.set_ylabel("Donations/day")
-    ax.set_ylim(0,ymax)
+    ax.set_ylim([0,100])
+
+    ax.set_ylabel("% of total Belgian plasma donations (1000 per day)")
     ax.legend(fontsize=5, loc="center right")
     ax.grid(alpha=0.3)
-    ax.set_title(f"Donations (max potential donations is {max(results['daily_potential_donations']):,.0f})")
+    ax.set_title("CCP collection requirements relative to Belgian plasma donation capacity")
     add_variant_lines(
         ax,
         dates[0],
@@ -1116,7 +1155,7 @@ with tab_model:
 
     ax.plot(dates, stock, label="Stock", color="blue", linewidth=2, alpha=0.5)
     ax.plot(dates, high_risk_stock, label="High-risk stock", color="red", linewidth=1)
-    ax.plot(dates, general_stock, label="General-use stock", color="green", linewidth=1)
+    ax.plot(dates, general_stock, label="General-use only stock", color="green", linewidth=1)
 
     ax.set_ylabel("Treatment courses in inventory")
     ax.set_title("Inventory")
@@ -1131,16 +1170,11 @@ with tab_model:
     st.pyplot(fig, width="stretch")
     plt.close(fig)
 
-    # Flows (produced, delivered, discarded)
+    # Delivery (delivered, discarded)
     show_general_delivered = st.toggle(
         "Show treatment courses delivered to general population",
         value=False)
     fig, ax = plt.subplots(figsize=(6, 3))
-    production = np.where(
-        results["daily_production"] > 0,
-        results["daily_production"] / results["doses_per_treatment"],
-        np.nan
-    )
 
     delivered_hr = np.where(
         results["daily_reserved_doses_high_risk"] > 0,
@@ -1160,7 +1194,6 @@ with tab_model:
         np.nan
     )
 
-    ax.plot(dates, production, label="Production", color="blue", linewidth=1, alpha=0.5)
     ax.plot(dates, delivered_hr, label="Delivered (high-risk)", color="orange", linewidth=0.7)
 
     if show_general_delivered:
@@ -1177,12 +1210,13 @@ with tab_model:
         discarded,
         label="Discarded",
         color="red",
-        linewidth=1
+        linewidth=0.7,
+        alpha=0.7
     )
     ax.set_ylabel("Treatment courses/day")
     ax.legend(fontsize=7)
     ax.grid(alpha=0.3)
-    ax.set_title("Operational flows")
+    ax.set_title("Prophylaxis delivery")
     add_variant_lines(
         ax,
         dates[0],
@@ -1302,12 +1336,25 @@ with tab_model:
     st.pyplot(fig, width="stretch")
     plt.close(fig)
 
-    # Delivered plasma age by day
-    # y = plasma age
+    # Delivered plasma age/activity by day
+    # y = plasma age/activity
     # color = donor variant
     # background = patient variant
+    age_activity = st.radio(
+    "Age or activity",
+    [
+        "Age",
+        "Activity"
+    ],
+    horizontal=True,
+    )
+    show_activity = age_activity == "Activity"
+    if show_activity:
+        key = "activity"
+    else:
+        key="age"
     show_general = st.toggle(
-            "Age of delivered plasma to general population",
+            f"{key} of delivered plasma to general population",
             value=False,
             key="age_var")
     fig, ax = plt.subplots(figsize=(6, 3))
@@ -1329,6 +1376,7 @@ with tab_model:
             "high_risk_donor_variant_stock_delivered"
         ]
     age_stock_delivered = results["high_risk_age_stock_delivered"]
+    activity_stock_delivered = results["high_risk_activity_stock_delivered"]
     gen_high = "high-risk population"
     if show_general:
         patient_variant_stock_delivered = results[
@@ -1338,6 +1386,7 @@ with tab_model:
                 "general_donor_variant_stock_delivered"
             ]
         age_stock_delivered = results["general_age_stock_delivered"]
+        activity_stock_delivered = results["general_activity_stock_delivered"]
         gen_high = "general population"
     
     for variants in patient_variant_stock_delivered:
@@ -1350,7 +1399,7 @@ with tab_model:
                 variants[0]
             )
     start_idx = None
-    for i in range(len(patient_variant_day)):
+    for i,_ in enumerate(patient_variant_day):
         if patient_variant_day[i] is None:
             continue
         if start_idx is None:
@@ -1377,11 +1426,13 @@ with tab_model:
     # Scatter points
     # -----------------------------------------
     for day_idx, (
+        activities,
         ages,
         donor_variants,
         patient_variants
     ) in enumerate(
         zip(
+            activity_stock_delivered,
             age_stock_delivered,
             donor_variant_stock_delivered,
             patient_variant_stock_delivered
@@ -1397,13 +1448,22 @@ with tab_model:
             )
             for donor_variant in donor_variants
         ]
-        ax.scatter(
-            x,
-            ages,
-            c=colors,
-            s=0.2,
-            alpha=0.2
-        )
+        if show_activity:
+            ax.scatter(
+                x,
+                activities,
+                c=colors,
+                s=0.2,
+                alpha=0.2
+            )
+        else:
+            ax.scatter(
+                x,
+                ages,
+                c=colors,
+                s=0.2,
+                alpha=0.2
+            )            
     # -----------------------------------------
     # Legend (donor variant)
     # -----------------------------------------
@@ -1415,10 +1475,10 @@ with tab_model:
             label=variant
         )
     ax.set_ylabel(
-        "Age of delivered CCP plasma (days)"
+        f"{key} of delivered CCP plasma (days)"
     )
     ax.set_title(
-        f"Delivered plasma age ({gen_high})\n"
+        f"Delivered plasma {key} ({gen_high})\n"
         "point color = donor variant, background = patient variant"
     )
     ax.grid(
@@ -1458,7 +1518,8 @@ with tab_model:
         results["high_risk_treatment_efficacy"],
         "--",
         label="High-risk treatment efficacy", 
-        linewidth=0.5
+        linewidth=0.4,
+        alpha=0.5
     )
     general_eff = np.where(
         results["general_treatment_efficacy"] > 0,
@@ -1473,7 +1534,8 @@ with tab_model:
             general_eff,
             "--",
             label="General treatment efficacy",
-            linewidth=1
+            linewidth=0.4,
+            alpha=0.5
         )
     ax.plot(
         dates,
@@ -1512,52 +1574,6 @@ with tab_model:
         variant_changes
     )
     format_axes(ax)
-    st.pyplot(fig, width="stretch")
-    plt.close(fig)
-
-    # Relative inventory composition
-    fig, ax = plt.subplots(figsize=(6, 3))
-
-    total_classified_stock = (
-        results["high_risk_stock"]
-        + results["general_stock"]
-    )
-
-    high_risk_fraction = (
-        100
-        * results["high_risk_stock"]
-        / np.maximum(total_classified_stock, 1)
-    )
-
-    general_fraction = (
-        100
-        * results["general_stock"]
-        / np.maximum(total_classified_stock, 1)
-    )
-
-    ax.stackplot(
-        dates,
-        high_risk_fraction,
-        general_fraction,
-        labels=[
-            "High-risk eligible",
-            "General-use"
-        ],
-        colors=[
-            "#d62728",
-            "#2ca02c"
-        ]
-    )
-
-    ax.set_ylim(0, 100)
-    ax.set_ylabel("% of inventory")
-    ax.set_title(
-        "Inventory eligibility composition"
-    )
-    ax.legend()
-    ax.grid(alpha=0.3)
-    format_axes(ax)
-
     st.pyplot(fig, width="stretch")
     plt.close(fig)
 
@@ -1655,7 +1671,9 @@ with tab_sensitivity:
                         "Max storage age": [30, 500],
                         "Dose volume per nostril": [100/ 500000, 600/ 500000],
                         "Donations per donor": [1, 10],
-                        "Maximum donations/day": [1, 450],
+                        "Maximum donations/day": [10, 1000],
+                        "Release threshold": [0.01, 1.0],
+                        "Release fraction": [0.01, 1.0],
                         "Maximum adoption": [0.01, 1.00],
                         "Start time": [0, 200],
                         "Rollout time": [10, 400]
@@ -1713,6 +1731,8 @@ with tab_sensitivity:
         test_dose = dose_volume
         test_donations_per_donor = donations_per_donor
         test_capacity = capacity_per_day
+        test_release_threshold = release_threshold
+        test_release_fraction = release_fraction
         test_A_max = A_max
         test_t_start = t_start
         test_rollout = T_rollout
@@ -1742,6 +1762,12 @@ with tab_sensitivity:
         elif parameter == "Maximum donations/day":
             test_capacity = value
 
+        elif parameter == "Release threshold":
+            test_release_threshold = value
+
+        elif parameter == "Release fraction":
+            test_release_fraction = value
+
         elif parameter == "Maximum adoption":
             test_A_max = value
 
@@ -1761,6 +1787,8 @@ with tab_sensitivity:
             max_storage_age=test_max_storage_age, #
             A_max=test_A_max, #
             capacity_per_day=test_capacity, #
+            release_threshold=test_release_threshold, #
+            release_fraction=test_release_fraction, #
             treatment_duration=treatment_duration,
             potential_donor_rate=test_potential_donor_rate,
             over_titre_donor_rate=over_titre_donor_rate,
@@ -1817,78 +1845,3 @@ with tab_sensitivity:
     format_axes(ax, False)
     st.pyplot(fig, width="stretch")
     plt.close(fig)
-
-
-    # ## Tornado plot analysis
-    # baseline_results = run_model(
-    # H,
-    # I,
-    # variant_changes,
-    # initial_ccp_activity=initial_ccp_activity,
-    # minimum_usable_activity=minimum_usable_activity,
-    # A_max=A_max,
-    # capacity_per_day=capacity_per_day,
-    # treatment_duration=treatment_duration,
-    # potential_donor_rate=potential_donor_rate,
-    # over_titre_donor_rate=over_titre_donor_rate,
-    # doses_per_patient_per_day=doses_per_patient_per_day,
-    # donation_volume=donation_volume,
-    # donations_per_donor=donations_per_donor,
-    # dose_volume=dose_volume,
-    # delay_inf_to_hosp=delay_inf_to_hosp,
-    # t_start=t_start,
-    # T_rollout=T_rollout,
-    # window_start=window_start,
-    # window_end=window_end
-    # )
-
-    # baseline_prevented = np.sum(
-    #     baseline_results["H_prevented"]
-    # )
-    # operational_parameters = [
-    #     "Potential donor rate",
-    #     "Maximum donations/day",
-    #     "Maximum adoption",
-    #     "Start time",
-    #     "Rollout time"
-    # ]
-
-    # system_parameters = [
-    #     "Initial CCP activity",
-    #     "Daily activity decay",
-    #     "Minimum usable activity",
-    #     "Donations per donor",
-    # ]
-   
-    # baseline_values = {
-    #     "Initial CCP activity": initial_ccp_activity,
-    #     "Minimum usable activity": minimum_usable_activity,
-    #     "Potential donor rate": potential_donor_rate,
-    #     "Donations per donor": donations_per_donor,
-    #     "Maximum donations/day": capacity_per_day,
-    #     "Maximum adoption": A_max,
-    #     "Start time": t_start,
-    #     "Rollout time": T_rollout,
-    # }
-
-    # operational_tornado = run_tornado(
-    #     operational_parameters
-    # )
-
-    # plot_tornado(
-    #     operational_tornado,
-    #     "Operational levers",
-    #     baseline_prevented,
-    #     baseline_values
-    # )
-
-    # system_tornado = run_tornado(
-    #     system_parameters
-    # )
-
-    # plot_tornado(
-    #     system_tornado,
-    #     "Treatment and biological assumptions",
-    #     baseline_prevented,
-    #     baseline_values
-    # )

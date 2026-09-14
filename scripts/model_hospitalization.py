@@ -10,9 +10,11 @@ def run_model(
     initial_ccp_activity=0.70,
     high_risk_use_threshold=0.40,
     minimum_usable_activity = 0.05,
-    max_storage_age = 365,
+    max_storage_age = 730,
     A_max=1.0,
     capacity_per_day=100,
+    release_threshold=0.05,
+    release_fraction=0.05,
     treatment_duration=90,
     potential_donor_rate=0.2,
     over_titre_donor_rate=0.2,
@@ -119,6 +121,8 @@ def run_model(
     inventory = []
     high_risk_ages = []
     general_ages = []
+    hr_stock_request_rates = []
+    no_stock_days = 0
     for i in range(n_days):
 
         inventory = model_methods.update_inventory(
@@ -154,40 +158,56 @@ def run_model(
                 model_methods.summarize_inventory(inventory)
             )
 
+        if high_risk_stock == 0:
+            no_stock_days += 1
+            hr_stock_request_rate = 1
+        else:
+            hr_stock_request_rate = (
+                high_risk_requested
+                * doses_per_treatment
+                / high_risk_stock
+            )
+        
+        hr_stock_request_rates.append(hr_stock_request_rate)
+
         variant_counts = model_methods.variant_accounting(inventory)
 
         for name, value in variant_counts.items():
             variant_series[name][i] = value
 
-    
+
+        # High-risk patients can use all high-risk stock that we have available
         (   inventory,
             high_risk_patients, # actual patients that started (can be less than capacity)
             max_high_risk_patients, # capacity implied by inventory
-            high_risk_reserved,
+            high_risk_allocated,
             high_risk_activity,
             doses_age_high_risk
-        ) = model_methods.match_fifo_allocate_patients(
+        ) = model_methods.match_fifo_allocate_high_risk(
                 inventory,
                 high_risk_requested,
                 doses_per_treatment,
                 high_risk_stock,
-                "high_risk",
-                variant_today
+                variant_today,
             )
 
+        # General patients can use all general use stock and may also use a released fraction of high-risk stock
         (   inventory,
             general_patients,
             _, # not analyzing general population stock limits for now
-            general_reserved,
+            general_allocated,
             general_activity,
             doses_age_general
-        ) = model_methods.match_fifo_allocate_patients(
+        ) = model_methods.match_fifo_allocate_general(
                 inventory,
                 general_requested,
                 doses_per_treatment,
+                high_risk_stock,
                 general_stock,
-                "general",
-                variant_today
+                variant_today,
+                hr_stock_request_rate,
+                release_threshold,
+                release_fraction
             )
         
         high_risk_ages.append(doses_age_high_risk)
@@ -249,12 +269,12 @@ def run_model(
         # daily delivered doses (for reporting) - 
         # daily delivered today corrspond to the treatment courses started today
         reserved_doses_series[i] = (
-                high_risk_reserved
-                + general_reserved
+                high_risk_allocated
+                + general_allocated
             )
 
-        reserved_doses_series_high_risk[i] = high_risk_reserved
-        reserved_doses_series_general[i] = general_reserved
+        reserved_doses_series_high_risk[i] = high_risk_allocated
+        reserved_doses_series_general[i] = general_allocated
 
     # Shift coverage forward
     C_effective = np.roll(
@@ -303,9 +323,11 @@ def run_model(
         "high_risk_patients": high_risk_patients_series,
         "general_patients": general_patients_series,
         "active_patients": active_patients,
+        "high_risk_activity_stock_delivered": [[item["deploy_activity"] for item in day] for day in high_risk_ages],
         "high_risk_age_stock_delivered": [[item["age"] for item in day] for day in high_risk_ages],
         "high_risk_patient_variant_stock_delivered": [[item["patient_variant"] for item in day] for day in high_risk_ages],
         "high_risk_donor_variant_stock_delivered": [[item["donor_variant"] for item in day] for day in high_risk_ages],
+        "general_activity_stock_delivered": [[item["deploy_activity"] for item in day] for day in general_ages],
         "general_age_stock_delivered": [[item["age"] for item in day] for day in general_ages],
         "general_patient_variant_stock_delivered": [[item["patient_variant"] for item in day] for day in general_ages],
         "general_donor_variant_stock_delivered": [[item["donor_variant"] for item in day] for day in general_ages],
@@ -483,7 +505,7 @@ if __name__ == "__main__":
 
     # date in which the variant became dominant (exceded 50% proportion) https://epidata.sciensano.be/epistat/dashboard/#covid_variants
     variant_dates = {
-        "Alpha": "2020-12-15",
+        "Alpha": "2021-02-20",
         "Delta": "2021-06-29", # previous date I had was "2021-06-15". This new one is from https://epidata.sciensano.be/epistat/dashboard/#covid_variants
         "Omicron": "2021-12-31" # previous date I had was "2021-12-15" 
     }
@@ -505,12 +527,12 @@ if __name__ == "__main__":
         key=lambda x: x["day"]
     )
 
-    # results = run_model(
-    #     H=H,
-    #     I=I,
-    #     variant_changes = variant_changes,
-    #     debug=False
-    # )
+    results = run_model(
+        H=H,
+        I=I,
+        variant_changes = variant_changes,
+        debug=False
+    )
     
     # donation_window_start = 30
     # donation_window_end = 180
