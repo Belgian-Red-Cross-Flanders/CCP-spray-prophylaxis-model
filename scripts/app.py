@@ -895,7 +895,10 @@ with tab_model:
     st.pyplot(fig, width="stretch")
     plt.close(fig)
 
-    # Hospitalizations by variant period
+    # Hospitalizations by variant period / General population (infections) targeted per variant period
+    general_reached = st.toggle(
+        "Show general population reached",
+        value=False)
     # Define variant periods
     period_names = ["Wuhan"]
     period_starts = [dates.iloc[0]]
@@ -916,21 +919,36 @@ with tab_model:
             &
             (dates < end)
         )
-        realized.append(
-            np.sum(results["H_ccp"][mask])
-        )
-        prevented.append(
-            np.sum(results["H_prevented"][mask])
-        )
+        if general_reached:
+            realized.append(np.sum(results["general_population"][mask]))
+            prevented.append(np.sum(results["general_patients"][mask]))
+            
+        else:
+            realized.append(
+                np.sum(results["H_ccp"][mask])
+            )
+            prevented.append(
+                np.sum(results["H_prevented"][mask])
+            )
     # Plot
     fig, ax = plt.subplots(figsize=(6, 3))
     x = np.arange(len(period_names))
+    if general_reached:
+        label_realized = "Remaining infected population"
+        label_prevented = "Infected population reached"
+        ylabel = "Non-high-risk infections"
+        title = "CCP delivery to non-high-risk infected population"
+    else:
+        label_realized = "Ziekenhuisopnames met CCP"
+        label_prevented = "Voorkomen ziekenhuisopnames"
+        ylabel = "Ziekenhuisopnames"
+        title = "Voorkomen ziekenhuisopnames per variantperiode"
     # realized hospitalizations
     ax.bar(
         x,
         realized,
         color="steelblue",
-        label="Ziekenhuisopnames met CCP"
+        label=label_realized
     )
     # prevented hospitalizations
     ax.bar(
@@ -939,7 +957,7 @@ with tab_model:
         bottom=realized,
         color="red",
         alpha=0.8,
-        label="Voorkomen ziekenhuisopnames"
+        label=label_prevented
     )
     # annotate prevented numbers
     for i in range(len(period_names)):
@@ -951,7 +969,7 @@ with tab_model:
                 ha="center",
                 va="center",
                 fontsize=6,
-                color="white"
+                color="black"
             )
     ax.set_xticks(x)
     ax.set_xticklabels(period_names)
@@ -960,11 +978,11 @@ with tab_model:
         labelsize=6
     )
     ax.set_ylabel(
-        "Ziekenhuisopnames",
+        ylabel,
         fontsize=8
     )
     ax.set_title(
-        "Voorkomen ziekenhuisopnames per variantperiode",
+        title,
         fontsize=8
     )
     ax.legend(
@@ -1194,7 +1212,7 @@ with tab_model:
         np.nan
     )
 
-    ax.plot(dates, delivered_hr, label="Delivered (high-risk)", color="orange", linewidth=0.7)
+    
 
     if show_general_delivered:
         ax.plot(
@@ -1202,19 +1220,25 @@ with tab_model:
             delivered_general,
             label="Delivered (general pop.)",
             color="gray",
-            linewidth=0.7
+            linewidth=0.4
         )
+        ax.set_yscale("log")
+        ylabel = "Treatment courses/day (log scale)"
+    else:
+        ylabel = "Treatment courses/day"
 
+    ax.plot(dates, delivered_hr, label="Delivered (high-risk)", color="orange", linewidth=0.4)
     ax.plot(
         dates,
         discarded,
         label="Discarded",
         color="red",
-        linewidth=0.7,
-        alpha=0.7
+        linewidth=0.4,
+        alpha=0.5
     )
-    ax.set_ylabel("Treatment courses/day")
-    ax.legend(fontsize=7)
+        
+    ax.set_ylabel(ylabel)
+    ax.legend(fontsize=5)
     ax.grid(alpha=0.3)
     ax.set_title("Prophylaxis delivery")
     add_variant_lines(
@@ -1231,30 +1255,38 @@ with tab_model:
                 "Demand and delivery to the general population",
                 value=False,
                 key="dd")
-    title = "High-risk"
-    demand = results["high_risk_demand"]
-    patients = results["high_risk_patients"]
+    fig, ax = plt.subplots(figsize=(6, 3))
     if general_dd:
         title ="General population"
         demand = results["general_demand"]
         patients = results["general_patients"]
-    fig, ax = plt.subplots(figsize=(6, 3))
-    ax.plot(
+        ylabel = "Infections/day (log scale)"
+        ax.set_yscale("log")
+    else:
+        title = "High-risk"
+        demand = results["high_risk_demand"]
+        patients = results["high_risk_patients"]
+        ylabel = "Hospitalizations/day"
+
+    
+    ax.fill_between(
         dates,
         demand,
         label=f"{title} demand",
         color="black",
-        alpha=0.4
+        alpha=0.2
+        # width=0.5
     )
-    ax.plot(
+    ax.fill_between(
         dates,
         patients,
         label=f"{title} treated",
-        color="red",
-        linewidth=0.5
+        alpha=0.4,
+        color="red"
+        # width=0.5
     )
-    ax.set_ylabel("Patients/day")
-    ax.legend(fontsize=7)
+    ax.set_ylabel(ylabel)
+    ax.legend(fontsize=5, loc="upper right")
     ax.grid(alpha=0.3)
     ax.set_title(f"{title}: demand and delivery")
     format_axes(ax)
