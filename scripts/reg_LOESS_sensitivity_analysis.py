@@ -15,7 +15,7 @@ outcome1 = "Hospitalizations prevented"
 y = global_sensitivity_results[outcome1]
 
 test_params = global_sensitivity_results.columns[:-2]
-fig, axes = plt.subplots(3, 4, figsize=(14,9))
+fig, axes = plt.subplots(4, 4, figsize=(14,9))
 axes_flat = axes.flatten()
 
 #formatter: 2000 to 2k
@@ -115,8 +115,7 @@ for outcome in [
         predictor = interp1d(
             loess_fit[:,0],
             loess_fit[:,1],
-            bounds_error=False,
-            fill_value="extrapolate"
+            bounds_error=True
         )
 
         quantiles = np.quantile(

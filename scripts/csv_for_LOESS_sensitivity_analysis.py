@@ -1,7 +1,29 @@
 import pandas as pd
 import numpy as np
 
-from model_hospitalization import run_model, summarize_results
+from model_hospitalization import run_model
+
+def sample_activity_parameters(n):
+    collected = []
+
+    while len(collected) < n:
+        initial = np.random.uniform(0.40, 0.80)
+        high_risk = np.random.uniform(0.30, 0.50)
+        minimum = np.random.uniform(0.01, 0.10)
+
+        if minimum < high_risk < initial:
+            collected.append(
+                (initial, high_risk, minimum)
+            )
+
+    return pd.DataFrame(
+        collected,
+        columns=[
+            "Initial CCP activity",
+            "High-risk usage activity threshold",
+            "Minimum usable activity"
+        ]
+    )
 
 ## Model parameters (fixed)
 df_hosp = pd.read_csv("data_processed/hospitalizations_clean.csv")
@@ -23,10 +45,11 @@ I = df["CASES"].values
 
 variant_changes = []
 
+# date in which the variant became dominant (exceded 50% proportion) https://epidata.sciensano.be/epistat/dashboard/#covid_variants
 variant_dates = {
-    "Alpha": "2020-12-15",
-    "Delta": "2021-06-29",
-    "Omicron": "2021-12-31"
+    "Alpha": "2021-02-20",
+    "Delta": "2021-06-29", # previous date I had was "2021-06-15". This new one is from https://epidata.sciensano.be/epistat/dashboard/#covid_variants
+    "Omicron": "2021-12-31" # previous date I had was "2021-12-15" 
 }
 
 for variant, date_str in variant_dates.items():
@@ -50,43 +73,26 @@ delay_inf_to_hosp=7 # 7 days according to cross-correlation between hospitalizat
 window_start=30
 window_end=180
 
+initial_ccp_activity = 0.7
+high_risk_use_threshold = 0.4
+minimum_usable_activity = 0.05
+
 
 ## Sensitivity analysis parameters (and the ones to vary)
 n_sim = 10000
 
-samples = pd.DataFrame()
+# ----------------------
+# Activity parameters
+# ----------------------
 
-# Initial efficacy sampled first
-samples["Initial CCP activity"] = np.random.uniform(
-    0.1,
-    1.0,
-    n_sim
-)
+samples = sample_activity_parameters(n_sim)
 
-# High-risk threshold must be below initial efficacy
-samples["High-risk usage activity threshold"] = [
-    np.random.uniform(
-        0.1,
-        initial_activity
-    )
-    for initial_activity
-    in samples["Initial CCP activity"]
-]
-
-# Minimum usable activity must be below high-risk threshold
-samples["Minimum usable activity"] = [
-    np.random.uniform(
-        0.01,
-        high_risk_threshold
-    )
-    for high_risk_threshold
-    in samples[
-        "High-risk usage activity threshold"
-    ]
-]
-
+# samples = pd.DataFrame()
+# ----------------------
 # Independent parameters
-samples["Potential donor rate"] = np.random.uniform(0.01, 1.0, n_sim)
+# ----------------------
+
+samples["Potential donor rate"] = np.random.uniform(0.05, 0.5, n_sim)
 samples["Max storage age"] = np.random.randint(
         30,
         1201,
@@ -99,27 +105,33 @@ samples["Dose volume per nostril"] = np.random.uniform(
     )
 samples["Donations per donor"] = np.random.randint(
         1,
-        11,
+        5,
         n_sim
     )
-samples["Maximum donations/day"] = np.random.uniform(
+samples["Maximum donations/day"] = np.random.randint(
         10,
         450,
         n_sim
     )
+samples["Release threshold"] = np.random.uniform(
+    0.0, 0.1, n_sim
+)
+samples["Release fraction"] = np.random.uniform(
+    0.0, 0.1, n_sim
+)
 samples["Maximum adoption"] = np.random.uniform(
-        0.01,
+        0.1,
         1.0,
         n_sim
     )
 samples["Start time"] = np.random.randint(
         0,
-        201,
+        180,
         n_sim
     )
 samples["Rollout time"] = np.random.randint(
-        10,
-        601,
+        14,
+        180,
         n_sim
     )
 
@@ -142,19 +154,27 @@ for i, row in samples.iterrows():
         minimum_usable_activity=
             row["Minimum usable activity"],
 
+        # initial_ccp_activity = initial_ccp_activity,
+        # high_risk_use_threshold = high_risk_use_threshold,
+        # minimum_usable_activity = minimum_usable_activity,
+
         max_storage_age=
-            int(
-                row["Max storage age"]
-            ),
+            int(row["Max storage age"]),
 
         A_max=
             row["Maximum adoption"],
 
         capacity_per_day=
-            row["Maximum donations/day"],
+            int(row["Maximum donations/day"]),
+
+        release_threshold =
+            row["Release threshold"],
+
+        release_fraction=
+            row["Release fraction"],
 
         treatment_duration=
-            treatment_duration,
+            int(treatment_duration),
 
         potential_donor_rate=
             row["Potential donor rate"],
@@ -169,12 +189,10 @@ for i, row in samples.iterrows():
             donation_volume,
 
         donations_per_donor=
-            int(
-                row["Donations per donor"]
-            ),
+            int(row["Donations per donor"]),
 
         min_donation_interval=
-            min_donation_interval,
+            int(min_donation_interval),
 
         dose_volume=
             row["Dose volume per nostril"],
@@ -183,14 +201,10 @@ for i, row in samples.iterrows():
             delay_inf_to_hosp,
 
         t_start=
-            int(
-                row["Start time"]
-            ),
+            int(row["Start time"]),
 
         T_rollout=
-            int(
-                row["Rollout time"]
-            ),
+            int(row["Rollout time"]),
 
         window_start=
             window_start,

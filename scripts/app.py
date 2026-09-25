@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.ticker import FuncFormatter
+from io import BytesIO
 
 from model_hospitalization import run_model, summarize_results
 
@@ -438,6 +439,31 @@ with tab_model:
 
     ## RUN MODEL
     #region
+    ## PARAMETERS USED FOR THIS RUN
+    params_df = pd.DataFrame([{
+        "Initial CCP activity": initial_ccp_activity,
+        "High-risk usage activity threshold": high_risk_use_threshold,
+        "Minimum usable activity": minimum_usable_activity,
+        "Max storage age": max_storage_age,
+        "Maximum adoption": A_max,
+        "Maximum donations/day": capacity_per_day,
+        "Release threshold": release_threshold,
+        "Release fraction": release_fraction,
+        "Treatment duration": treatment_duration,
+        "Potential donor rate": potential_donor_rate,
+        "Over-titre donor rate": over_titre_donor_rate,
+        "Doses per patient per day": doses_per_patient_per_day,
+        "Donation volume": donation_volume,
+        "Donations per donor": donations_per_donor,
+        "Minimum donation interval": donation_interval,
+        "Dose volume": dose_volume,
+        "Infection-to-hospitalization delay": delay_inf_to_hosp,
+        "Start time": t_start,
+        "Rollout time": T_rollout,
+        "Donation window start": window_start,
+        "Donation window end": window_end
+    }])
+
     results = run_model(
         H,
         I,
@@ -835,7 +861,7 @@ with tab_model:
         cum_hosp,
         color="black",
         linewidth=2,
-        label="Werkelijk (geen programma)"
+        label="Actual (no program)" #"Werkelijk (geen programma)"
     )
 
     ax.plot(
@@ -843,7 +869,7 @@ with tab_model:
         cum_hosp_ccp,
         color="tab:blue",
         linewidth=2,
-        label="Met CCP-profylaxe"
+        label="With CCP prophylaxis" #"Met CCP-profylaxe"
     )
 
     # shaded prevented area
@@ -866,7 +892,8 @@ with tab_model:
     ax.text(
         0.78,
         0.65,
-        f"Totaal voorkomen:\n"
+        #f"Totaal voorkomen:\n"
+        f"Total prevented:\n"
         f"{total_prevented:,.0f}\n"
         f"({pct_prevented:.1f}%)",
         transform=ax.transAxes,
@@ -880,11 +907,11 @@ with tab_model:
     )
 
     ax.set_ylabel(
-        "Cumulatieve ziekenhuisopnames"
+        "Cumulative hospitalizations" #"Cumulatieve ziekenhuisopnames"
     )
 
     ax.set_title(
-        "Cumulatieve ziekenhuisopnames met en zonder intranasaal CCP"
+        "Cumulative hospitalizations with and without i.n. CCP" #"Cumulatieve ziekenhuisopnames met en zonder intranasaal CCP"
     )
 
     ax.legend(fontsize=7)
@@ -894,6 +921,68 @@ with tab_model:
 
     st.pyplot(fig, width="stretch")
     plt.close(fig)
+
+
+    # -----------------------------
+    # Parameters sheet
+    # -----------------------------
+    params_export = params_df.T.reset_index()
+    params_export.columns = ["Parameter", "Value"]
+
+
+    # -----------------------------
+    # Hospitalizations sheet
+    # -----------------------------
+    hosp_export = pd.DataFrame({
+        "Date": dates,
+        "Baseline hospitalizations": H,
+        "Hospitalizations with CCP": H - results["H_prevented"],
+        "Hospitalizations prevented": results["H_prevented"],
+        "Cumulative baseline hospitalizations": cum_hosp,
+        "Cumulative hospitalizations with CCP": cum_hosp_ccp,
+    })
+
+
+    # -----------------------------
+    # Create Excel workbook
+    # -----------------------------
+    excel_buffer = BytesIO()
+
+    with pd.ExcelWriter(
+        excel_buffer,
+        engine="openpyxl"
+    ) as writer:
+
+        params_export.to_excel(
+            writer,
+            sheet_name="Parameters",
+            index=False
+        )
+
+        hosp_export.to_excel(
+            writer,
+            sheet_name="Hospitalizations",
+            index=False
+        )
+
+
+    excel_buffer.seek(0)
+
+
+    # -----------------------------
+    # Download button
+    # -----------------------------
+    st.download_button(
+        label="Download hospitalization results (Excel)",
+        data=excel_buffer,
+        file_name=f"hosp_results_{pct_prevented:.1f}pct.xlsx",
+        mime=(
+            "application/vnd.openxmlformats-officedocument."
+            "spreadsheetml.sheet"
+        ),
+        key="download_hosp_results"
+    )
+
 
     # Hospitalizations by variant period / General population (infections) targeted per variant period
     general_reached = st.toggle(
