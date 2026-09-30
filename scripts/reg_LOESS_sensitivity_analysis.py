@@ -15,83 +15,137 @@ outcome1 = "Hospitalizations prevented"
 y = global_sensitivity_results[outcome1]
 
 test_params = global_sensitivity_results.columns[:-2]
-fig, axes = plt.subplots(4, 4, figsize=(14,9))
-axes_flat = axes.flatten()
-
 #formatter: 2000 to 2k
 k_formatter = FuncFormatter(lambda x, pos: f"{int(x/1000)}k")
 
-for idx, parameter in enumerate(test_params):
-    x = global_sensitivity_results[parameter]
-
-    loess_fit = lowess(
-        y,
-        x,
-        frac=0.3,
-        return_sorted=True
-    )
-    ax = axes_flat[idx]
-    ax.scatter(
-        x,
-        y,
-        s=2,
-        alpha=0.05,
-        color="gray"
-    )
-
-    ax.plot(
-        loess_fit[:,0],
-        loess_fit[:,1],
-        color="red",
-        linewidth=2
-    )
-
-    ax.set_xlabel(parameter, fontsize=8)
-    ax.yaxis.set_major_formatter(k_formatter)
-    ax.tick_params(labelsize=7)
-    ax.set_ylim(0,80000)
-
-    # only the first column gets y-axis label
-    if idx%4==0:
-        ax.set_ylabel("Hosp. prevented", fontsize=8)
-        # ax.set_ylabel("General treated", fontsize=8)
-    else:
-        ax.set_ylabel("")
-
-#remove unused axes
-for ax in axes_flat[len(test_params):]:
-    fig.delaxes(ax)
-
-plt.tight_layout()
-plt.show()
-
-global_sensitivity_results[
-    [
-        "Minimum usable activity",
-        "High-risk usage activity threshold",
-        "Initial CCP activity"
-    ]
-].corr()
+#region
+# fig, axes = plt.subplots(4, 4, figsize=(14,9))
+# axes_flat = axes.flatten()
 
 
-quantiles = np.quantile(
-    x,
-    [0.01, 0.25, 0.50, 0.75, 0.99]
-)
 
-predictor = interp1d(
-    loess_fit[:,0],
-    loess_fit[:,1],
-    bounds_error=False,
-    fill_value="extrapolate"
-)
+# for idx, parameter in enumerate(test_params):
+#     x = global_sensitivity_results[parameter]
 
-y_pred = predictor(
-    quantiles
-)
+#     loess_fit = lowess(
+#         y,
+#         x,
+#         frac=0.3,
+#         return_sorted=True
+#     )
+#     ax = axes_flat[idx]
+#     ax.scatter(
+#         x,
+#         y,
+#         s=2,
+#         alpha=0.05,
+#         color="gray"
+#     )
 
-effect = y_pred[-1] - y_pred[0]
-importance = abs(effect)
+#     ax.plot(
+#         loess_fit[:,0],
+#         loess_fit[:,1],
+#         color="red",
+#         linewidth=2
+#     )
+
+#     ax.set_xlabel(parameter, fontsize=8)
+#     ax.yaxis.set_major_formatter(k_formatter)
+#     ax.tick_params(labelsize=7)
+#     ax.set_ylim(0,80000)
+
+#     # only the first column gets y-axis label
+#     if idx%4==0:
+#         ax.set_ylabel("Hosp. prevented", fontsize=8)
+#         # ax.set_ylabel("General treated", fontsize=8)
+#     else:
+#         ax.set_ylabel("")
+
+# #remove unused axes
+# for ax in axes_flat[len(test_params):]:
+#     fig.delaxes(ax)
+
+# plt.tight_layout()
+# plt.show()
+
+# global_sensitivity_results[
+#     [
+#         "Minimum usable activity",
+#         "High-risk usage activity threshold",
+#         "Initial CCP activity"
+#     ]
+# ].corr()
+#endregion
+parameter_info = {
+
+    "Initial CCP activity": {
+        "category": "Clinical efficacy",
+        "range": "(40-80%)"
+    },
+
+    "High-risk usage activity threshold": {
+        "category": "Clinical efficacy",
+        "range": "(30-50%)"
+    },
+
+    "Minimum usable activity": {
+        "category": "Clinical efficacy",
+        "range": "(1-10%)"
+    },
+
+    "Potential donor rate": {
+        "category": "Collection",
+        "range": "(5-50%)"
+    },
+
+    "Donations per donor": {
+        "category": "Collection",
+        "range": "(1-4 donations)"
+    },
+
+    "Maximum donations/day": {
+        "category": "Collection",
+        "range": "(10-450/day)"
+    },
+
+    "Max storage age": {
+        "category": "Collection",
+        "range": "(30-1200 days)"
+    },
+
+    "Dose volume per nostril": {
+        "category": "Treatment design",
+        "range": "(100-700 µL)"
+    },
+
+    "Release threshold": {
+        "category": "Inventory policy",
+        "range": "(0-10%)"
+    },
+
+    "Release fraction": {
+        "category": "Inventory policy",
+        "range": "(0-10%)"
+    },
+
+    "Maximum adoption": {
+        "category": "Implementation",
+        "range": "(10-100%)"
+    },
+
+    "Start time": {
+        "category": "Implementation",
+        "range": "(0-180 days)"
+    },
+
+    "Rollout time": {
+        "category": "Implementation",
+        "range": "(14-180 days)"
+    }
+}
+
+k_formatter = FuncFormatter(lambda x, pos: f"{int(x/1000)}k")
+
 
 importance_results = []
 
@@ -123,6 +177,13 @@ for outcome in [
             [0.01, 0.25, 0.50, 0.75, 0.99]
         )
 
+        y_pred = predictor(
+            quantiles
+        )
+
+        effect = y_pred[-1] - y_pred[0]
+        importance = abs(effect)
+
         yq = predictor(quantiles)
 
         effect = (yq[-1]- yq[0])
@@ -149,8 +210,6 @@ importance_df.sort_values(
     ascending=[True,False]
 )        
 
-print(importance_df)
-
 plot_df = importance_df[
     [
         "Outcome",
@@ -165,19 +224,30 @@ plot_df = importance_df[
     ]
 ]
 
+plot_df["Category"] = (
+    plot_df["Parameter"]
+    .map(
+        lambda p:
+        parameter_info[p]["category"]
+    )
+)
+
 plot_df = (
     plot_df[
         plot_df["Outcome"]
         == "Hospitalizations prevented"
     ]
     .sort_values(
-        "LOESS effect size",
-        ascending=True
+        [
+            "Category",
+            "LOESS effect size"
+        ],
+        ascending=[True, False]
     )
 )
 
 fig, ax = plt.subplots(
-    figsize=(8,6)
+    figsize=(10,8)
 )
 
 ypos = np.arange(len(plot_df))
@@ -200,52 +270,136 @@ for i, (_, row) in enumerate(
         row["Q01 prediction"],
         i,
         color="blue",
-        s=30,
-        label="1%" if i == 0 else None
+        s=15,
+        label="1st percentile" if i == 0 else None
     )
 
     ax.scatter(
         row["Q25 prediction"],
         i,
         color="skyblue",
-        s=30,
-        label="25%" if i == 0 else None
+        s=15,
+        label="25th percentile" if i == 0 else None
     )
 
     ax.scatter(
         row["Q50 prediction"],
         i,
         color="black",
-        s=35,
-        label="50%" if i == 0 else None
+        s=25,
+        zorder=5,
+        label="Median"
+        if i == 0
+        else None
     )
 
     ax.scatter(
         row["Q75 prediction"],
         i,
         color="orange",
-        s=30,
-        label="75%" if i == 0 else None
+        s=15,
+        label="75th percentile" if i == 0 else None
     )
 
     ax.scatter(
         row["Q99 prediction"],
         i,
         color="red",
-        s=30,
-        label="99%" if i == 0 else None
+        s=15,
+        label="99th percentile" if i == 0 else None
+    )
+
+category_breaks = np.where(
+    plot_df["Category"]
+    !=
+    plot_df["Category"].shift()
+)[0]
+
+for pos in category_breaks[1:]:
+
+    ax.axhline(
+        pos - 0.5,
+        color="gray",
+        linewidth=1,
+        alpha=0.6
+    )
+
+for category in plot_df["Category"].unique():
+
+    positions = np.where(
+        plot_df["Category"] == category
+    )[0]
+
+    ypos_cat = positions.max()
+
+    ax.text(
+        0.01,
+        ypos_cat + 0.5,
+        category,
+        transform=ax.get_yaxis_transform(),
+        ha="left",
+        va="top",
+        fontsize=8,
+        fontweight="bold"
+    )
+
+yticklabels = []
+
+for _, row in plot_df.iterrows():
+
+    info = parameter_info[
+        row["Parameter"]
+    ]
+
+    yticklabels.append(
+        (
+            f"{row['Parameter']}\n"
+            f"{info['range']} "
+        )
     )
 
 ax.set_yticks(ypos)
+
 ax.set_yticklabels(
-    plot_df["Parameter"]
+    yticklabels,
+    fontsize=8
 )
 
 ax.set_xlabel(
     "Predicted hospitalizations prevented"
 )
 
-ax.legend()
+ax.legend(
+    title="Parameter quantile",
+    frameon=True,
+    loc="lower right"
+)
+
+ax.xaxis.set_major_locator(
+    plt.MultipleLocator(5000)
+)
+ax.xaxis.set_minor_locator(
+    plt.MultipleLocator(2500)
+)
+
+ax.xaxis.set_major_formatter(k_formatter)
+
+
+ax.grid(
+    which="major",
+    axis="x",
+    color="lightgray",
+    linewidth=1
+)
+
+ax.grid(
+    which="minor",
+    axis="x",
+    color="lightgray",
+    linewidth=0.5,
+    alpha=0.5
+)
+
 
 plt.tight_layout()
 plt.show()

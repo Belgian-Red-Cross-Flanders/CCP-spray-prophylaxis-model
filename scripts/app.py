@@ -947,7 +947,7 @@ with tab_model:
     # Create Excel workbook
     # -----------------------------
     excel_buffer = BytesIO()
-
+    
     with pd.ExcelWriter(
         excel_buffer,
         engine="openpyxl"
@@ -1028,10 +1028,10 @@ with tab_model:
         ylabel = "Non-high-risk infections"
         title = "CCP delivery to non-high-risk infected population"
     else:
-        label_realized = "Ziekenhuisopnames met CCP"
-        label_prevented = "Voorkomen ziekenhuisopnames"
-        ylabel = "Ziekenhuisopnames"
-        title = "Voorkomen ziekenhuisopnames per variantperiode"
+        label_realized = "Hospitalizations prevented with i.n. CCP" #"Ziekenhuisopnames met CCP"
+        label_prevented = "Prevented hospitalizations" #"Voorkomen ziekenhuisopnames"
+        ylabel = "Hospitalizations" #"Ziekenhuisopnames"
+        title = "Hospitalizations prevented per variant period" #"Voorkomen ziekenhuisopnames per variantperiode"
     # realized hospitalizations
     ax.bar(
         x,
