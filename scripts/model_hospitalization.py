@@ -48,7 +48,7 @@ def run_model(
         debug
         )   
 
-    daily_batches, daily_potential_donations = model_methods.calculate_daily_batches(
+    daily_batches, daily_potential_donations, donor_statistics = model_methods.calculate_daily_batches_agent(
     I,
     n_days,
     donor_rate,
@@ -59,8 +59,7 @@ def run_model(
     window_start,
     window_end,
     initial_ccp_activity,
-    variant_changes,
-    debug = False
+    variant_changes
     )
 
     daily_doses = np.zeros(n_days)
@@ -71,9 +70,9 @@ def run_model(
             for batch in daily_batches[day]
         )
         daily_donations[day] = sum(
-                    batch["donors"]
-                    for batch in daily_batches[day]
-                )
+            batch["donations"]
+            for batch in daily_batches[day]
+        )
 
     high_risk_population, general_population = model_methods.calculate_populations(
         H,
@@ -309,8 +308,11 @@ def run_model(
         "H_prevented": H_prevented,
         "H_reduction_pct": H_reduction_pct,
 
+        # Donations
         "daily_potential_donations": daily_potential_donations, 
         "daily_donations": daily_donations,
+        "participating_donors": donor_statistics["unique_participating_donors"],
+        "average_donations_per_participating_donor": donor_statistics["average_donations_per_participating_donor"],
 
         # Demand/adoption
         "adoption": adoption,
@@ -372,7 +374,7 @@ def summarize_results(results):
         ),
 
         "total_donors": np.sum(
-            results["daily_donations"]/results["donations_per_donor"]
+            results["participating_donors"]
         ),
 
         "total_produced": np.sum(
@@ -534,45 +536,3 @@ if __name__ == "__main__":
         debug=False
     )
     
-    # donation_window_start = 30
-    # donation_window_end = 180
-    # min_donation_interval = 14
-    # donations_per_donor=3
-    # initial_ccp_activity=0.7
-    # cross_neutralization = {
-    #         "Wuhan": {
-    #             "Wuhan": 1.00,
-    #             "Alpha": 1/np.sqrt(2.3), # 0.66
-    #             "Delta": 1/np.sqrt(1.6), # 0.79
-    #             "Omicron": 1/np.sqrt(20) # 0.22
-    #         },
-    
-    #         "Alpha": {
-    #             "Alpha": 1.00,
-    #             "Delta": 1/np.sqrt(2.2), # 0.67
-    #             "Omicron": 1/np.sqrt(50) # 0.14
-    #         },
-    
-    #         "Delta": {
-    #             "Delta": 1.00,
-    #             "Omicron": 1/np.sqrt(11) # 0.30
-    #         },
-    
-    #         "Omicron": {
-    #             "Omicron": 1.00
-    #         }
-    #     }
-
-    # debug_methods.debug_donation_schedule(
-    #     donation_window_start,
-    #     donation_window_end,
-    #     min_donation_interval,
-    #     donations_per_donor,
-    #     initial_ccp_activity,
-    #     variant_changes,
-    #     cross_neutralization
-    #     )
-    # summary = summarize_results(results)
-
-    # print_report(results)
-    # plot_results(results, summary)

@@ -266,7 +266,7 @@ with tab_pandemic:
     ax.plot(
         dates,
         I,
-        label="Simulated pandemic",
+        # label="Simulated pandemic",
         color="black",
         linewidth=1
     )
@@ -274,7 +274,7 @@ with tab_pandemic:
         "New infections/day"
     )
 
-    ax.legend(loc='upper right', fontsize=7)
+    # ax.legend(loc='upper right', fontsize=7)
     ax.grid(alpha=0.3)
     add_variant_lines(
             ax,
@@ -290,7 +290,7 @@ with tab_pandemic:
     ax.plot(
         dates,
         H,
-        label="Simulated pandemic",
+        # label="Simulated pandemic",
         color="black",
         linewidth=1
     )
@@ -298,7 +298,7 @@ with tab_pandemic:
         "Hospital admissions/day"
     )
     # Combine legends
-    ax.legend(loc='upper right', fontsize=7)
+    # ax.legend(loc='upper right', fontsize=7)
     ax.grid(alpha=0.3)
     add_variant_lines(
             ax,
@@ -1715,6 +1715,7 @@ with tab_model:
         "Metric": [
             "Total number of donors",
             "Total number of donations",
+            "Average donations per donor",
             "Total treatment courses produced",
             "Total treatment courses delivered",
             "Total treatment courses delivered (high-risk)",
@@ -1738,6 +1739,8 @@ with tab_model:
         "Value": [
             f"{summary['total_donors']:,.0f}",
             f"{summary['total_donations']:,.0f}",
+            f"{results['average_donations_per_participating_donor']:,.2f}",
+
             f"{summary['total_produced'] / doses_per_treatment:,.0f}",
 
             f"{summary['total_delivered'] / doses_per_treatment:,.0f}",
@@ -1966,3 +1969,21 @@ with tab_sensitivity:
     format_axes(ax, False)
     st.pyplot(fig, width="stretch")
     plt.close(fig)
+
+    # import pandas as pd
+
+    # # Save plotted data to CSV
+    # plot_data = pd.DataFrame({
+    #     "Maximum donations per day": x_values,
+    #     "Total general infected population reached": general
+    # })
+
+    # plot_data.to_csv("maximum_donations_vs_general_infected.csv", index=False)
+
+    # # Plot
+    # ax.plot(
+    #     x_values,
+    #     general,
+    #     marker="o"
+    # )
+
