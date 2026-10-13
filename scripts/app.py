@@ -20,19 +20,22 @@ def load_scaled_covid(
     hospitalization_multiplier = 1.0,
 ):
     """
-    Current approach:
-    scale infections and severity relative to COVID.
+    Load COVID-19 cases and hospitalizations and apply scaling factors to
+    infection incidence and hospitalization severity.
+
+    Returns scaled infections (I), scaled hospitalizations (H), and dates.
     """
     df_hosp = pd.read_csv(hosp_path)
     df_cases = pd.read_csv(cases_path)
 
+    # Convert the csv DATE column to pandas datetime
     df_hosp["DATE"] = pd.to_datetime(df_hosp["DATE"])
     df_cases["DATE"] = pd.to_datetime(df_cases["DATE"])
 
-    # Merge on DATE (inner join keeps only common dates)
+    # Merge on DATE (inner join keeps only common dates, so the hospitalization dates)
     df = pd.merge(df_hosp, df_cases, on="DATE", how="inner")
 
-    # Sort just in case
+    # Sort by date just in case
     df = df.sort_values("DATE")
 
     # Extract aligned series
@@ -40,10 +43,13 @@ def load_scaled_covid(
     H_ori = df["NEW_IN"].values
     I_ori = df["CASES"].values
 
+    # Multiply the infections by a constant to make the pandemic more "infectious"
     I = infection_multiplier * I_ori
 
+    # Recalculate the hospitalization rate with the new infections
     hospitalization_rate = H_ori / I_ori
 
+    # Recalculate the hospitalizations with the infections and the hospitalizations multiplier (makes the pandemic more "severe")
     H = (
         I
         * hospitalization_multiplier
@@ -56,7 +62,9 @@ def load_covasim_pandemic(
     covasim_file
 ):
     """
-    Load Covasim-generated pandemic.
+    Load a Covasim-generated pandemic time series.
+
+    Returns infections (I), hospitalizations (H), and dates.
     """
 
     df = pd.read_csv(
@@ -128,6 +136,9 @@ def add_variant_lines(ax, start_date, variant_changes):
         )
 
 def smart_format(x, pos):
+    """
+    Format numbers for display with an appropriate number of decimals.
+    """
     if abs(x) >= 1000:
         return f"{x:,.0f}"
     elif (abs(x) >= 1) or (abs(x) == 0):
@@ -136,8 +147,10 @@ def smart_format(x, pos):
         return f"{x:.2f}"
 
 def format_axes(ax, months=True):
-
-    # Align all plots
+    """
+    Apply consistent formatting to matplotlib axes.
+    """
+    # Standardize subplot margins across figures
     ax.figure.subplots_adjust(
         left=0.20,
         right=0.97,
@@ -146,7 +159,7 @@ def format_axes(ax, months=True):
     )
 
     if months:
-        # Date axis
+        # Show date ticks every 6 months
         ax.xaxis.set_major_locator(
             mdates.MonthLocator(interval=6)
         )
@@ -160,6 +173,7 @@ def format_axes(ax, months=True):
         labelsize=6
     )
 
+    # Rotate date labels to avoid overlap
     for label in ax.get_xticklabels():
         label.set_rotation(45)
         label.set_horizontalalignment("right")
@@ -175,13 +189,15 @@ def format_axes(ax, months=True):
     # Title
     ax.title.set_size(8)
 
+    # Remove default x-axis padding
     ax.margins(x=0)
 
 #endregion
 # ------------------------------------------------------
+# Application title and top-level navigation tabs
 st.title(
     "Intranasal CCP Prophylaxis Model"
-)
+) 
 tab_pandemic, tab_model, tab_sensitivity = st.tabs(
     [
         "Pandemic",
@@ -191,8 +207,8 @@ tab_pandemic, tab_model, tab_sensitivity = st.tabs(
 )
 
 with tab_pandemic:
-    # change the pandemic here (infections, hospitalizations, variant appearance and cross-neutralization can also be here)
-    st.header("Pandemic scenario")
+    st.header("Pandemic scenario")     # Pandemic scenario selection and parameterization
+
     pandemic_source = st.radio(
         "Pandemic source",
         [
@@ -204,6 +220,8 @@ with tab_pandemic:
 
     if pandemic_source == "COVID-19 (possible scaling)":
         st.markdown("###### (relative to observed COVID-19 pandemic in Belgium)")
+
+        # Scale infection incidence and severity relative to observed COVID-19
         infection_multiplier = st.slider(
             "Infection multiplier",
             min_value=1.0,
@@ -226,6 +244,7 @@ with tab_pandemic:
             hospitalization_multiplier,
         )
 
+        # Estimated lag between infections and hospital admissions
         delay_inf_to_hosp = 7 # 7 days according to cross-correlation between hospitalizations and infections
 
 
@@ -235,8 +254,10 @@ with tab_pandemic:
             "data_processed/covasim_belgium_unmitigated.csv",
         )
 
+        # Estimated lag between infections and hospital admissions
         delay_inf_to_hosp = 11 # 11 days according to cross-correlation between hospitalizations and infections
 
+    # Define dates at which a new variant becomes dominant
     variant_changes = []
 
     variant_dates = {
@@ -259,14 +280,15 @@ with tab_pandemic:
 
 
     # PLOTS
+    # Pandemic time-series visualizations
     #region
 
     fig, ax = plt.subplots(figsize=(6, 3))
-    # Infections 
+    # Daily infections 
     ax.plot(
         dates,
         I,
-        # label="Simulated pandemic",
+        # label="Simulated pandemic", # Add this back if you want to use the simulations (plot was used to show just the regular COVID-19)
         color="black",
         linewidth=1
     )
@@ -274,7 +296,7 @@ with tab_pandemic:
         "New infections/day"
     )
 
-    # ax.legend(loc='upper right', fontsize=7)
+    # ax.legend(loc='upper right', fontsize=7) # Add this back if you want to use the simulations (plot was used to show just the regular COVID-19)
     ax.grid(alpha=0.3)
     add_variant_lines(
             ax,
@@ -286,7 +308,7 @@ with tab_pandemic:
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(6, 3))
-    # Hospitalizations 
+    # Daily hospital admissions
     ax.plot(
         dates,
         H,
@@ -311,16 +333,18 @@ with tab_pandemic:
 
 
 with tab_model:
-    ## SIDEBAR
+    ## SIDEBAR - Model scenario configuration
     #region
     st.sidebar.header(
         "Scenario Parameters"
     )
+
+    # Clinical and biological assumptions
     st.sidebar.subheader(
         "Clinical/Biological"
     )
 
-    # % reduction in hospitalization risk
+    # CCP effectiveness against hospitalization at 30 days post-infection
     initial_ccp_activity = st.sidebar.slider(
         "Initial CCP activity (effectiveness at 30 days after infection)",
         min_value=0.01,
@@ -328,6 +352,7 @@ with tab_model:
         value=0.7,
         step=0.01
     )
+    # Activity threshold below which CCP is no longer reserved for high-risk patients
     high_risk_use_threshold = st.sidebar.slider(
         "Activity threshold for high-risk usage",
         min_value=0.01,
@@ -335,7 +360,8 @@ with tab_model:
         value=0.40,
         step=0.01,
         format="%0.2f"
-    )    
+    )
+    # Minimum activity required for a unit to remain in inventory    
     minimum_usable_activity = st.sidebar.slider(
         "CCP expiry activity (remove from stock)",
         min_value=0.001,
@@ -344,6 +370,7 @@ with tab_model:
         step=0.001,
         format="%0.3f"
     )
+    # Maximum storage duration before units expire
     max_storage_age = st.sidebar.slider(
         "Max storage age",
         min_value=90,
@@ -352,7 +379,7 @@ with tab_model:
         step=10
     )
 
-    # ---------
+    # Treatment regimen assumptions
     st.sidebar.subheader(
         "Treatment design"
     )
@@ -367,11 +394,11 @@ with tab_model:
     doses_per_patient_per_day = int(st.sidebar.text_input("Doses per patient per day", 2))
     treatment_duration = int(st.sidebar.text_input("Treatment duration (days)", 90))
     
-    # ---------
+    # Donor recruitment and eligibility assumptions
     st.sidebar.subheader(
         "Donor recruitment/availability"
     )
-    # 10% of recovered donate (in Belgium - Elise was using Flanders) (% of the recovered that actually donate)
+    # x% of recovered donate (in Belgium - Elise was using Flanders) 
     potential_donor_rate = st.sidebar.slider(
         "Potential donor rate",
         min_value=0.01,
@@ -388,12 +415,13 @@ with tab_model:
         value=0.20,
         step=0.01
     )
-    # Assumption of donation window:
+    # Assumption of donation window: Eligible donation period after infection
     st.sidebar.caption("People can donate in a window between [window_start] and [window_end] days post-infection")
     #  People can donate in a window between [window_start] and [window_end] days post-infection
     window_start = int(st.sidebar.text_input("Window start (days)", 30))
     window_end = int(st.sidebar.text_input("Window end (days)", 180))
-    # ---------
+
+    # Collection and inventory management assumptions
     st.sidebar.subheader(
         "Operational/supply chain"
     )
@@ -407,6 +435,8 @@ with tab_model:
         value=100,
         step=10
     )
+
+    # Conditions under which excess stock is released to the general population
     release_threshold = st.sidebar.slider(
         "Release threshold (on high-risk requested/stock rate)",
         min_value=0.0,
@@ -422,7 +452,7 @@ with tab_model:
         step=0.05
     )
 
-    # ---------
+    # Adoption and rollout assumptions
     st.sidebar.subheader(
         "Adoption/implementation"
     )
@@ -433,13 +463,15 @@ with tab_model:
         value=1.0,
         step=0.05
     )
+
+    # Rollout timing parameters
     t_start = int(st.sidebar.text_input("Start time (days after pandemic/plot start)", 30))  # days after start
-    T_rollout = int(st.sidebar.text_input("Rollout time (days after start time)", 30))  # days to reach max
+    T_rollout = int(st.sidebar.text_input("Rollout time (days after start time)", 30))  # days to reach max after t_start
     #endregion
 
-    ## RUN MODEL
+    ## RUN MODEL (using the selected scenario parameters)
     #region
-    ## PARAMETERS USED FOR THIS RUN
+    ## PARAMETERS USED FOR THIS RUN - Store parameter values for export and reproducibility
     params_df = pd.DataFrame([{
         "Initial CCP activity": initial_ccp_activity,
         "High-risk usage activity threshold": high_risk_use_threshold,
@@ -491,6 +523,8 @@ with tab_model:
         window_end=window_end,
         debug=False
     )
+
+    # Calculate aggregate outcome measures
     summary = summarize_results(results)
     #endregion
 
@@ -503,10 +537,9 @@ with tab_model:
     ## Clinical / Biological Parameters
 
     ### Initial CCP activity
-    Biological activity of newly produced CCP at the time of collection.
-    - 0.70 = newly collected plasma starts at 70% activity
+    Maximum prophylactic effectiveness of a CCP unit against a matching viral variant.
 
-    Activity at collection represents the baseline biological activity of the plasma unit. 
+    This represents the hospitalization reduction that could be achieved if the donor infection variant and circulating variant are identical.
     
     Activity is subsequently adjusted according to the degree of cross-neutralization between the donor infection variant and the dominant circulating variant at the time of treatment.
 
@@ -532,11 +565,14 @@ with tab_model:
     ---    
 
     ### CCP expiry activity
-    Minimum projected treatment activity required for plasma to remain usable.
-   
-    Plasma is discarded when its projected activity for a treatment starting today falls below this threshold.
+    Minimum projected activity required for a CCP unit to remain eligible for allocation.
 
-    - 0.05 = CCP expected to retain less than 5% activity by the end of treatment is not allocated to new patients.
+    Units with projected activity below this threshold are removed from inventory.
+
+    ### Maximum storage age
+    Maximum time (days) that a CCP unit can remain in inventory.
+
+    Units exceeding this age are discarded regardless of their projected activity.
 
     ---
 
@@ -641,7 +677,7 @@ with tab_model:
     ---
 
     ### Donations per donor
-    Number of donations obtained from each donor. \n
+    Maximum number of donations obtained from each eligible donor during the donation window. \n
     The collection schedule is optimized to maximize spacing between donations while preserving as many donations as possible before the next anticipated variant-dominance transition. 
     
     This represents anticipatory collection efforts to obtain plasma before a decline in expected cross-variant effectiveness.
@@ -683,21 +719,25 @@ with tab_model:
     ---
 
     ### Inventory classes
-    Stored plasma is classified into:
+    Stored CCP units are classified according to projected activity under the currently dominant variant:
 
     High-risk stock
-    - Projected treatment activity above the high-risk threshold.
+    - Activity above the high-risk usage threshold.
 
     General-use stock
-    - Projected treatment activity between the high-risk threshold and expiry activity.
+    - Activity below the high-risk threshold but above the expiry threshold.
 
     Expired stock
-    - Projected treatment activity below the expiry threshold and removed from inventory.
+    - Activity below the expiry threshold or beyond the maximum storage age.
 
-    Released high-risk stock
-    - High-risk inventory temporarily made available to the general population when the high-risk stock request rate falls below the release threshold.
-    - Released stock retains its original activity and variant-matching characteristics.
-                    
+    ---
+
+    ### Release policy
+
+    When high-risk inventory substantially exceeds expected high-risk demand, a fraction of the reserved inventory can be made available for allocation to the general population.
+
+    Release behavior is governed by the release threshold and release fraction parameters.
+
     ---
 
     ## Adoption / Implementation Parameters
@@ -727,18 +767,25 @@ with tab_model:
     ### Coverage
     Fraction of the high-risk population that receives treatment.
 
-    Coverage =
-    treated high-risk patients /
-    high-risk population
+    Coverage reflects treatment allocation and does not account for differences in CCP activity.
 
     ---
 
     ### Effective coverage
-    Activity-adjusted fraction of the high-risk population receiving prophylaxis.
+    Activity-adjusted treatment coverage.
 
     Patients treated with higher-activity plasma contribute more to effective coverage than patients treated with lower-activity plasma.
+    Effective coverage equals treatment coverage multiplied by the average projected activity of the CCP delivered.
 
     Effective coverage is used to estimate the reduction in hospitalization burden.
+
+    ---
+
+    ### Hospitalizations prevented
+
+    Estimated reduction in hospital admissions attributable to CCP prophylaxis.
+
+    This outcome is calculated from effective coverage and the infection-to-hospitalization delay.
 
     ---
 
@@ -760,19 +807,19 @@ with tab_model:
         
     #endregion
 
-    ## KEY RESULTS
+    ## KEY RESULTS - Summary outcomes for the current scenario
     #region
     st.subheader("Key Results")
 
     col1, col2 = st.columns(2)
 
-    with col1:
+    with col1: # Total hospitalizations prevented over the simulation period
         st.metric(
             "Prevented hospitalizations",
             f"{np.sum(results['H_prevented']):,.0f}/{np.sum(H):,.0f}"
         )
 
-    with col2:
+    with col2: # Mean coverage of the high-risk population
         st.metric(
             "Average high-risk people reached",
             f"{100*summary['average_coverage']:.1f}%"
@@ -780,13 +827,13 @@ with tab_model:
 
     col3, col4 = st.columns(2)
 
-    with col3:
+    with col3: # Hospitalizations prevented as a percentage of all hospitalizations
         st.metric(
             "Average hospitalizations prevented",
             f"{100*np.sum(results['H_prevented'])/np.sum(H):.1f}%"
         )
 
-    with col4:
+    with col4: # Fraction of produced CCP that was ultimately discarded
         st.metric(
             "Discard rate",
             f"{100*summary['total_discarded']/summary['total_produced']:.1f}%"
@@ -796,15 +843,18 @@ with tab_model:
     ## PLOTS
     #region
     fig, ax = plt.subplots(figsize=(6, 3))
-    # Hospitalizations reduction (main plot)
+    # Hospitalizations over time with and without CCP prophylaxis
     show_infections = st.toggle(
     "Show infections",
     value=False)
+    # Hide periods before prophylaxis is deployed
     H_ccp_plot = np.where(
         results["coverage"] > 0,
         results["H_ccp"],
         np.nan
     )
+
+    # Baseline and CCP-adjusted hospitalizations
     ax.plot(
         dates,
         H,
@@ -822,6 +872,8 @@ with tab_model:
     ax.set_ylabel(
         "Hospital admissions/day"
     )
+
+    # Optional infection incidence overlay
     if show_infections:  
         ax2 = ax.twinx()     
         ax2.fill_between(
@@ -833,29 +885,30 @@ with tab_model:
         )
         ax2.set_ylabel("Infections/day")
 
-        # Combine legends
+        # Combine legends from both y-axes
         lines, labels = ax.get_legend_handles_labels()
         lines2, labels2 = ax2.get_legend_handles_labels()
         ax.legend(handles=lines + lines2, labels=labels + labels2, loc='center right', fontsize=7)
         format_axes(ax2)
+
     ax.legend(loc='center right', fontsize=7)
     ax.grid(alpha=0.3)
     format_axes(ax)
     st.pyplot(fig, width="stretch")
     plt.close(fig)
 
-    # Cumulative hospitalizations
+    # Cumulative hospitalization burden
     fig, ax = plt.subplots(figsize=(6, 3))
 
-    # cumulative baseline hospitalizations
+    # Cumulative hospitalizations without prophylaxis
     cum_hosp = np.cumsum(H)
 
-    # cumulative with CCP
+    # Cumulative hospitalizations after accounting for prevented admissions (with CCP)
     cum_hosp_ccp = np.cumsum(
         H - results["H_prevented"]
     )
 
-    # plot lines
+    # Plot cumulative lines
     ax.plot(
         dates,
         cum_hosp,
@@ -872,7 +925,7 @@ with tab_model:
         label="With CCP prophylaxis" #"Met CCP-profylaxe"
     )
 
-    # shaded prevented area
+    # Highlight prevented hospitalizations
     ax.fill_between(
         dates,
         cum_hosp_ccp,
@@ -881,14 +934,14 @@ with tab_model:
         alpha=0.25
     )
 
-    # numbers
+    # Summary statistics for annotation
     total_hosp = np.sum(H)
     total_prevented = np.sum(results["H_prevented"])
     pct_prevented = (
         100 * total_prevented / total_hosp
     )
 
-    # annotation
+    # annotation (option for dutch commented. uncomment if necessary)
     ax.text(
         0.78,
         0.65,
@@ -923,16 +976,12 @@ with tab_model:
     plt.close(fig)
 
 
-    # -----------------------------
-    # Parameters sheet
-    # -----------------------------
+    # Prepare model inputs and outputs for export
     params_export = params_df.T.reset_index()
     params_export.columns = ["Parameter", "Value"]
 
 
-    # -----------------------------
-    # Hospitalizations sheet
-    # -----------------------------
+    # Export daily and cumulative hospitalization outcomes
     hosp_export = pd.DataFrame({
         "Date": dates,
         "Baseline hospitalizations": H,
@@ -943,9 +992,7 @@ with tab_model:
     })
 
 
-    # -----------------------------
-    # Create Excel workbook
-    # -----------------------------
+    # Create an in-memory Excel workbook
     excel_buffer = BytesIO()
     
     with pd.ExcelWriter(
@@ -965,13 +1012,10 @@ with tab_model:
             index=False
         )
 
-
+    # Reset buffer position before download
     excel_buffer.seek(0)
-
-
-    # -----------------------------
-    # Download button
-    # -----------------------------
+    
+    # Download model results as an Excel workbook
     st.download_button(
         label="Download hospitalization results (Excel)",
         data=excel_buffer,
@@ -988,7 +1032,7 @@ with tab_model:
     general_reached = st.toggle(
         "Show general population reached",
         value=False)
-    # Define variant periods
+    # Define variant periods from the dominance-transition dates
     period_names = ["Wuhan"]
     period_starts = [dates.iloc[0]]
     for event in variant_changes:
@@ -997,7 +1041,8 @@ with tab_model:
             dates.iloc[0] + pd.Timedelta(days=event["day"])
         )
     period_starts.append(dates.iloc[-1])
-    # Aggregate
+
+    # Aggregate outcomes within each variant period
     realized = []
     prevented = []
     for i in range(len(period_names)):
@@ -1019,7 +1064,7 @@ with tab_model:
             prevented.append(
                 np.sum(results["H_prevented"][mask])
             )
-    # Plot
+    # Stacked bar chart of outcomes by variant period
     fig, ax = plt.subplots(figsize=(6, 3))
     x = np.arange(len(period_names))
     if general_reached:
@@ -1032,14 +1077,14 @@ with tab_model:
         label_prevented = "Prevented hospitalizations" #"Voorkomen ziekenhuisopnames"
         ylabel = "Hospitalizations" #"Ziekenhuisopnames"
         title = "Hospitalizations prevented per variant period" #"Voorkomen ziekenhuisopnames per variantperiode"
-    # realized hospitalizations
+    # Remaining hospitalizations (or infections) after CCP
     ax.bar(
         x,
         realized,
         color="steelblue",
         label=label_realized
     )
-    # prevented hospitalizations
+    # Prevented hospitalizations (or reached infections)
     ax.bar(
         x,
         prevented,
@@ -1048,7 +1093,7 @@ with tab_model:
         alpha=0.8,
         label=label_prevented
     )
-    # annotate prevented numbers
+    # Annotate the prevented/reached component of each bar
     for i in range(len(period_names)):
         if prevented[i] > 0:
             ax.text(
@@ -1091,38 +1136,38 @@ with tab_model:
     )
     plt.close(fig)
 
-    # Waterfall plot
+    # Waterfall plot summarizing the overall impact of CCP prophylaxis
     fig, ax = plt.subplots(figsize=(6,3))
     total_hosp = np.sum(H)
     total_prevented = np.sum(results["H_prevented"])
-    remaining = total_hosp - total_prevented
+    remaining = total_hosp - total_prevented # Hospitalizations remaining after CCP impact
     labels = [
         "Expected\n(no CCP)",
         "Prevented",
         "Remaining\n(with CCP)"
     ]
-    # positions
+    # Waterfall bar positions
     x = np.arange(3)
-    # first bar
+    # first bar - Baseline hospitalization burden
     ax.bar(
         x[0],
         total_hosp,
         color="black"
     )
-    # prevented bar (negative)
+    # Reduction attributable to CCP prophylaxis (negative)
     ax.bar(
         x[1],
         -total_prevented,
         bottom=total_hosp,
         color="red"
     )
-    # final bar
+    # Residual hospitalization burden after CCP
     ax.bar(
         x[2],
         remaining,
         color="tab:blue"
     )
-    # connector lines
+    # connector lines between waterfall stages
     ax.plot(
         [x[0], x[1]],
         [total_hosp, total_hosp],
@@ -1135,7 +1180,7 @@ with tab_model:
         color="gray",
         linestyle="--"
     )
-    # annotations
+    # Annotate bar values and overall percentage reduction
     ax.text(
         x[0],
         total_hosp + 5000,
@@ -1200,12 +1245,14 @@ with tab_model:
     st.pyplot(fig, width="stretch")
     plt.close(fig)
 
-    # Donations per day
-    total_belgium_plasma_capacity = 1000 # a maximum of 1000 donations per day in all plasma
+    # CCP collection requirements relative to national plasma collection capacity
+    total_belgium_plasma_capacity = 1000 # a maximum of 1000 donations per day in all plasma (Belgium)
     potential_pct = (np.array(results["daily_potential_donations"])/total_belgium_plasma_capacity * 100)
     donations_pct = (np.array(results["daily_donations"])/total_belgium_plasma_capacity * 100)
     capacity_pct = (capacity_per_day/total_belgium_plasma_capacity * 100)
+
     fig, ax = plt.subplots(figsize=(6, 3))
+    # Potential and realized CCP collections as a percentage of national capacity
     ax.bar(dates, potential_pct, label="Potential donations (willing and over-titer)", color="orange", 
             width=0.3, alpha=0.5)
     # ax.axhline(y=np.mean(potential_pct), color="brown",
@@ -1217,6 +1264,8 @@ with tab_model:
     # ax.axhline(y=np.mean(donations_pct), color="blue",
     #         linestyle="--", linewidth=0.6, 
     #         label="Average donations")
+
+    # Collection capacity allocated to the CCP program
     ax.axhline(
         y=capacity_pct,
         color="red",
@@ -1239,7 +1288,8 @@ with tab_model:
     st.pyplot(fig, width="stretch")
     plt.close(fig)
 
-    # Stock
+    # Inventory available for treatment allocation
+    # Convert doses to complete treatment courses
     stock = np.where(
     results["stock"] > 0,
     results["stock"] / results["doses_per_treatment"],
@@ -1259,7 +1309,7 @@ with tab_model:
     )
 
     fig, ax = plt.subplots(figsize=(6, 3))
-
+    # Inventory expressed as complete treatment courses
     ax.plot(dates, stock, label="Stock", color="blue", linewidth=2, alpha=0.5)
     ax.plot(dates, high_risk_stock, label="High-risk stock", color="red", linewidth=1)
     ax.plot(dates, general_stock, label="General-use only stock", color="green", linewidth=1)
@@ -1277,12 +1327,13 @@ with tab_model:
     st.pyplot(fig, width="stretch")
     plt.close(fig)
 
-    # Delivery (delivered, discarded)
+    # CCP utilization and wastage over time
     show_general_delivered = st.toggle(
         "Show treatment courses delivered to general population",
         value=False)
     fig, ax = plt.subplots(figsize=(6, 3))
 
+    # Convert delivered and discarded doses to treatment courses
     delivered_hr = np.where(
         results["daily_reserved_doses_high_risk"] > 0,
         results["daily_reserved_doses_high_risk"] / results["doses_per_treatment"],
@@ -1301,9 +1352,8 @@ with tab_model:
         np.nan
     )
 
-    
-
     if show_general_delivered:
+        # General-population delivery occurs at a much larger scale
         ax.plot(
             dates,
             delivered_general,
@@ -1316,6 +1366,7 @@ with tab_model:
     else:
         ylabel = "Treatment courses/day"
 
+    # High-risk delivery and discarded inventory
     ax.plot(dates, delivered_hr, label="Delivered (high-risk)", color="orange", linewidth=0.4)
     ax.plot(
         dates,
@@ -1339,17 +1390,18 @@ with tab_model:
     st.pyplot(fig, width="stretch")
 
 
-    # Demand and treated 
+    # Compare prophylaxis demand with actual treatment delivery
     general_dd = st.toggle(
                 "Demand and delivery to the general population",
                 value=False,
                 key="dd")
+    
     fig, ax = plt.subplots(figsize=(6, 3))
     if general_dd:
         title ="General population"
         demand = results["general_demand"]
         patients = results["general_patients"]
-        ylabel = "Infections/day (log scale)"
+        ylabel = "Infections/day (log scale)" # General-population values span several orders of magnitude
         ax.set_yscale("log")
     else:
         title = "High-risk"
@@ -1357,7 +1409,7 @@ with tab_model:
         patients = results["high_risk_patients"]
         ylabel = "Hospitalizations/day"
 
-    
+    # Requested versus delivered treatment courses
     ax.fill_between(
         dates,
         demand,
@@ -1387,10 +1439,10 @@ with tab_model:
     st.pyplot(fig, width="stretch")
     plt.close(fig)
 
-
-    # Stock by variant and eligibility
+    # Inventory composition by donor variant and eligibility class
     fig, ax = plt.subplots(figsize=(6, 3))
-
+    # Stack inventory by donor variant and whether units are currently
+    # eligible for high-risk or general-population allocation
     ax.stackplot(
         dates,
 
@@ -1445,22 +1497,22 @@ with tab_model:
     ax.legend(bbox_to_anchor=(0.4, 1.05))
     ax.grid(alpha=0.3)
 
-    # Shrink current axis's height by 10% on the bottom
+    # Move the plotting area down to make room for the legend
     box = ax.get_position()
     ax.set_position([box.x0, box.y0 + box.height * 0.1,
                     box.width, box.height * 0.9])
     ax.set_title("Inventory composition by variant and eligibility", pad=25)
-    # Put a legend below current axis
+    # Compact legend above the plot
     ax.legend(ncol=4, fontsize=5, loc='upper center', bbox_to_anchor=(0.5, 1.15))
     format_axes(ax)
 
     st.pyplot(fig, width="stretch")
     plt.close(fig)
 
-    # Delivered plasma age/activity by day
-    # y = plasma age/activity
-    # color = donor variant
-    # background = patient variant
+    # Delivered plasma age/activity by day (how variant matching and inventory aging influence the characteristics of CCP units delivered)
+    # y = plasma age/projected activity
+    # Point color = donor variant
+    # background color = dominant circulating (patient) variant
     age_activity = st.radio(
     "Age or activity",
     [
@@ -1485,11 +1537,9 @@ with tab_model:
         "Delta": "#2ca02c",
         "Omicron": "#ff7f0e"
     }
-    # -----------------------------------------
     # Background shading by patient variant
-    # -----------------------------------------
     patient_variant_day = []
-
+    # Select deliveries to the high-risk or general population
     patient_variant_stock_delivered = results[
             "high_risk_patient_variant_stock_delivered"
         ]
@@ -1498,6 +1548,7 @@ with tab_model:
         ]
     age_stock_delivered = results["high_risk_age_stock_delivered"]
     activity_stock_delivered = results["high_risk_activity_stock_delivered"]
+
     gen_high = "high-risk population"
     if show_general:
         patient_variant_stock_delivered = results[
@@ -1514,12 +1565,13 @@ with tab_model:
         if len(variants) == 0:
             patient_variant_day.append(None)
         else:
-            # all deliveries from a day are usually
-            # to the same dominant circulating variant
+            # all deliveries from a day typically correspond to a single
+            # dominant circulating variant
             patient_variant_day.append(
                 variants[0]
             )
     start_idx = None
+    # Shade periods according to the dominant circulating variant
     for i,_ in enumerate(patient_variant_day):
         if patient_variant_day[i] is None:
             continue
@@ -1543,9 +1595,11 @@ with tab_model:
             )
             start_idx = None
 
-    # -----------------------------------------
-    # Scatter points
-    # -----------------------------------------
+    # Scatter points - Plot delivered CCP units individually
+    #
+    # x-position: delivery date
+    # y-position: plasma age or projected activity
+    # color: donor infection variant
     for day_idx, (
         activities,
         ages,
@@ -1584,10 +1638,9 @@ with tab_model:
                 c=colors,
                 s=0.2,
                 alpha=0.2
-            )            
-    # -----------------------------------------
+            )    
+
     # Legend (donor variant)
-    # -----------------------------------------
     for variant, color in variant_colors.items():
         ax.scatter(
             [],
@@ -1626,7 +1679,8 @@ with tab_model:
     )
     plt.close(fig)
 
-    # Coverage, efficacy and adoption
+    # Coverage, efficacy and adoption dynamics
+    # Effective coverage combines treatment coverage with CCP activity
     fig, ax = plt.subplots(figsize=(6, 3))
     ax.plot(
         dates,
@@ -1634,6 +1688,7 @@ with tab_model:
         label="Effective coverage", 
         linewidth=0.5
     )
+    # Mean efficacy of CCP delivered to high-risk patients
     ax.plot(
         dates,
         results["high_risk_treatment_efficacy"],
@@ -1642,6 +1697,7 @@ with tab_model:
         linewidth=0.4,
         alpha=0.5
     )
+    # Hide periods with no general-population delivery
     general_eff = np.where(
         results["general_treatment_efficacy"] > 0,
         results["general_treatment_efficacy"],
@@ -1649,7 +1705,7 @@ with tab_model:
     )
 
     if np.any(~np.isnan(general_eff)):
-
+        # Mean efficacy of CCP delivered to the general population
         ax.plot(
             dates,
             general_eff,
@@ -1658,6 +1714,7 @@ with tab_model:
             linewidth=0.4,
             alpha=0.5
         )
+    # Average efficacy of all CCP units currently in inventory
     ax.plot(
         dates,
         results["mean_stock_efficacy"],
@@ -1665,6 +1722,7 @@ with tab_model:
         label="Mean stock efficacy", 
         linewidth=1
     )
+    # Prophylaxis uptake over time
     ax.plot(
         dates,
         results["adoption"],
@@ -1673,6 +1731,7 @@ with tab_model:
         label="Adoption",
         linewidth=1
     )
+    # Highlight periods where demand exceeds available supply
     ax.fill_between(
     dates,
     0,
@@ -1704,8 +1763,9 @@ with tab_model:
     )
     #endregion
 
-    ## RESULTS TABLE
+    ## RESULTS TABLE (Summary performance metrics for the current scenario)
     #region
+    # Convert inventory and delivery outputs from doses to treatment courses
     doses_per_treatment = (
         doses_per_patient_per_day
         * treatment_duration
@@ -1788,6 +1848,7 @@ with tab_model:
 with tab_sensitivity:
     st.subheader("Sensitivity Analysis")
 
+    # Parameter ranges explored in the one-way sensitivity analysis
     parameters_dict = { "Potential donor rate": [0.01, 1.0],
                         "Initial CCP activity": [0.1, 1.0],
                         "High-risk usage activity threshold": [0.1, 0.6],
@@ -1808,8 +1869,10 @@ with tab_sensitivity:
         parameters_dict.keys()
     )
 
-    # Sensitivity plots
+    # Generate evaluation points across the selected parameter range
     n_points = 20
+    # Integer-valued parameters are evaluated on discrete values;
+    # all others are sampled evenly across their range
     ranges = {
         parameter:
             (
@@ -1845,8 +1908,8 @@ with tab_sensitivity:
     x_values = ranges[parameter]
     prevented = []
     general = []
-    for value in x_values:
-
+    for value in x_values: # Vary one parameter while holding all others constant
+        # Start from the baseline scenario
         test_potential_donor_rate = potential_donor_rate
         test_initial_ccp_activity = initial_ccp_activity
         test_high_risk_use_threshold = high_risk_use_threshold
@@ -1861,6 +1924,7 @@ with tab_sensitivity:
         test_t_start = t_start
         test_rollout = T_rollout
 
+        # Apply the test value to the selected parameter
         if parameter == "Potential donor rate":
             test_potential_donor_rate = value
 
@@ -1901,6 +1965,7 @@ with tab_sensitivity:
         elif parameter == "Rollout time":
             test_rollout = value
 
+        # Re-run the model with the modified parameter value
         results_sens = run_model(
             H,
             I,
@@ -1929,11 +1994,13 @@ with tab_sensitivity:
             debug=False
         )
 
+        # Store outcome metrics for plotting
         prevented.append(
             np.sum(results_sens["H_prevented"])
         )
         general.append(np.sum(results_sens["general_patients"]))
 
+    # Total hospitalization reduction across the parameter range
     fig, ax = plt.subplots(figsize=(6, 3))
     ax.plot(
         x_values,
@@ -1953,6 +2020,7 @@ with tab_sensitivity:
     st.pyplot(fig, width="stretch")
     plt.close(fig)
 
+    # Total general-population treatment allocation across the parameter range
     fig, ax = plt.subplots(figsize=(6, 3))
     ax.plot(
         x_values,
@@ -1969,21 +2037,3 @@ with tab_sensitivity:
     format_axes(ax, False)
     st.pyplot(fig, width="stretch")
     plt.close(fig)
-
-    # import pandas as pd
-
-    # # Save plotted data to CSV
-    # plot_data = pd.DataFrame({
-    #     "Maximum donations per day": x_values,
-    #     "Total general infected population reached": general
-    # })
-
-    # plot_data.to_csv("maximum_donations_vs_general_infected.csv", index=False)
-
-    # # Plot
-    # ax.plot(
-    #     x_values,
-    #     general,
-    #     marker="o"
-    # )
-
