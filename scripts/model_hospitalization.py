@@ -1,7 +1,6 @@
 import pandas as pd
 import numpy as np
 import model_methods
-import debug_methods
 
 def run_model(
     H,
@@ -30,16 +29,23 @@ def run_model(
     window_end=180,
     debug=False
 ):
-    # Simple calculations:
+    """
+    Orchestrator: Simulate the collection, storage, allocation, and delivery of intranasal
+    CCP prophylaxis and estimate the resulting reduction in hospitalizations.
+    """
+
+    # Derive treatment and donor productivity metrics
     doses_per_donation = donation_volume/dose_volume
     doses_per_donor = donations_per_donor * doses_per_donation
     doses_per_treatment = doses_per_patient_per_day * treatment_duration
     treatments_per_donor = doses_per_donor/doses_per_treatment
-    donor_rate = potential_donor_rate * over_titre_donor_rate
 
+    # Fraction of infected individuals that ultimately become eligible donors
+    donor_rate = potential_donor_rate * over_titre_donor_rate
 
     n_days = len(H)
 
+    # Generate the prophylaxis adoption trajectory
     adoption = model_methods.calculate_adoption(
         n_days,
         A_max,
@@ -48,20 +54,22 @@ def run_model(
         debug
         )   
 
+    # Simulate donor recruitment and CCP collection
     daily_batches, daily_potential_donations, donor_statistics = model_methods.calculate_daily_batches_agent(
-    I,
-    n_days,
-    donor_rate,
-    capacity_per_day,
-    doses_per_donation,
-    donations_per_donor,
-    min_donation_interval,
-    window_start,
-    window_end,
-    initial_ccp_activity,
-    variant_changes
-    )
+        I,
+        n_days,
+        donor_rate,
+        capacity_per_day,
+        doses_per_donation,
+        donations_per_donor,
+        min_donation_interval,
+        window_start,
+        window_end,
+        initial_ccp_activity,
+        variant_changes
+        )
 
+    # Aggregate donated doses and completed donations by day
     daily_doses = np.zeros(n_days)
     daily_donations = np.zeros(n_days)
     for day in range(n_days):
@@ -74,6 +82,7 @@ def run_model(
             for batch in daily_batches[day]
         )
 
+    # Split infections into high-risk and general-population groups
     high_risk_population, general_population = model_methods.calculate_populations(
         H,
         I,
@@ -81,9 +90,8 @@ def run_model(
         debug
     )
 
+    # Storage arrays for model outputs
     stock = np.zeros_like(H, dtype=float)
-
-    # Track patients in active treatment (cohort accumulation) 
     active_patients = np.zeros_like(H, dtype=float) # high risk and general
     high_risk_patients_series = np.zeros_like(H, dtype=float)
     high_risk_demand_series = np.zeros_like(H, dtype=float)
@@ -99,7 +107,7 @@ def run_model(
     general_patients_series = np.zeros_like(H, dtype=float)
     high_risk_stock_series = np.zeros_like(H)
     general_stock_series = np.zeros_like(H)
-
+    # Track inventory composition by donor variant and eligibility class
     variant_series = {
         "wuhan_high_risk": np.zeros_like(H, dtype=float),
         "wuhan_general": np.zeros_like(H, dtype=float),
@@ -122,8 +130,9 @@ def run_model(
     general_ages = []
     hr_stock_request_rates = []
     no_stock_days = 0
-    for i in range(n_days):
-
+    for i in range(n_days): # Simulate collection, allocation, and inventory dynamics day by day
+        
+        # Add newly collected CCP units to inventory
         inventory = model_methods.update_inventory(
             inventory,
             daily_batches,
@@ -132,6 +141,8 @@ def run_model(
 
         variant_today = model_methods.get_variant(variant_changes, i) # the COVID variant that the people treated today have
 
+        # Reclassify inventory based on projected activity against
+        # the currently circulating variant and remove expired stock
         inventory, expired_today = model_methods.classify_inventory(
             inventory,
             variant_today,
@@ -139,7 +150,6 @@ def run_model(
             minimum_usable_activity,
             max_storage_age
         )
-
         discarded_doses[i] = expired_today
         
         # adoption determines the fraction of these eligible patients that seek treatment
@@ -159,22 +169,22 @@ def run_model(
 
         if high_risk_stock == 0:
             no_stock_days += 1
-            hr_stock_request_rate = 1
+            hr_stock_request_rate = 1 # Ratio of today's high-risk demand to available high-risk inventory
+            # Used to determine whether inventory can be released to the general population
         else:
             hr_stock_request_rate = (
                 high_risk_requested
                 * doses_per_treatment
                 / high_risk_stock
             )
-        
         hr_stock_request_rates.append(hr_stock_request_rate)
 
+        # Record inventory composition for reporting and visualization
         variant_counts = model_methods.variant_accounting(inventory)
-
         for name, value in variant_counts.items():
             variant_series[name][i] = value
 
-
+        # Allocate CCP to high-risk patients first using match-first FIFO inventory matching
         # High-risk patients can use all high-risk stock that we have available
         (   inventory,
             high_risk_patients, # actual patients that started (can be less than capacity)
@@ -190,6 +200,7 @@ def run_model(
                 variant_today,
             )
 
+        # Allocate remaining eligible inventory to the general population (including any released high-risk stock)
         # General patients can use all general use stock and may also use a released fraction of high-risk stock
         (   inventory,
             general_patients,
@@ -208,7 +219,8 @@ def run_model(
                 release_threshold,
                 release_fraction
             )
-        
+
+        # Store characteristics of CCP units delivered today
         high_risk_ages.append(doses_age_high_risk)
         general_ages.append(doses_age_general)
 
@@ -221,10 +233,11 @@ def run_model(
         high_risk_stock_series[i] = high_risk_stock
         general_stock_series[i] = general_stock
 
+        # Remove fully depleted inventory batches
         inventory = model_methods.remove_empty_batches(inventory)
 
-        # patients remain active for the entire treatment duration 
-        # even though inventory was already reserved at treatment initiation
+        # Count patients currently receiving prophylaxis.
+        # Inventory is reserved upfront, but patients remain active for the entire treatment duration (what I call treatment course)
         active_patients[i] = (
             np.sum(
                 high_risk_patients_series[
@@ -239,13 +252,14 @@ def run_model(
             )
         )
 
+        # Calculate total inventory and mean projected efficacy
         stock[i], stock_efficacy_series[i] = (
             model_methods.calculate_stock_metrics(
                 inventory
             )
         )
 
-        # Coverage:
+        # Calculate treatment coverage and activity-adjusted coverage
         C[i], effective_coverage[i] = (
             model_methods.calculate_hospitalization_reduction(
                 high_risk_patients,
@@ -254,37 +268,34 @@ def run_model(
             )
         )
 
-        # Supply coverage: fraction of the requested that was fulfilled
+        # Supply coverage: fraction of the requested high-risk treatments that was fulfilled
         C_supply[i] = model_methods.calculate_supply_coverage(
             high_risk_patients,
             high_risk_requested)
         
         
-        # identify limiting factor 
+        # Flag days when available inventory cannot satisfy demand
         if max_high_risk_patients < high_risk_requested: # more requests than availability
             supply_limited[i] = 1
 
 
-        # daily delivered doses (for reporting) - 
-        # daily delivered today corrspond to the treatment courses started today
+        # Record doses reserved for treatment courses initiated today 
         reserved_doses_series[i] = (
                 high_risk_allocated
                 + general_allocated
             )
-
         reserved_doses_series_high_risk[i] = high_risk_allocated
         reserved_doses_series_general[i] = general_allocated
 
-    # Shift coverage forward
+    # Shift coverage forward (to account for the delay between infection and potential hospitalization)
     C_effective = np.roll(
         effective_coverage,
         delay_inf_to_hosp
     )
     C_effective[:delay_inf_to_hosp] = 0
 
-    # --------------------------
-    # APPLY MODEL
-    # --------------------------
+
+    # APPLY MODEL (prophylaxis impact on hospitalization incidence)
     # Assumption: The fraction of hospitalizations is reduced proportionally to the fraction of treated high‑risk infections
     # the model no longer needs the separate efficacy term in the final equation because efficacy is already embedded in coverage
     # A patient treated with 70%-effective plasma contributes more than one treated with 20%-effective plasma.
@@ -367,7 +378,10 @@ def run_model(
     }
 
 def summarize_results(results):
-
+    """
+    Calculate summary metrics from a model simulation.
+    """
+    # Aggregate model outputs into summary statistics for reporting
     return {
         "total_donations": np.sum(
             results["daily_donations"]
@@ -457,7 +471,7 @@ def summarize_results(results):
 
 if __name__ == "__main__":     
 
-    ## LOAD + ALIGN DATA
+    # Load and align hospitalization and case data
     #region
     df_hosp = pd.read_csv("data_processed/hospitalizations_clean.csv")
     df_cases = pd.read_csv("data_processed/cases_clean.csv")
@@ -471,12 +485,11 @@ if __name__ == "__main__":
     # Sort just in case
     df = df.sort_values("DATE")
 
-    # Extract aligned series
+    # Extract aligned time series
     dates = df["DATE"]
     H = df["NEW_IN"].values
     I = df["CASES"].values
-    # Peak hospitalizations (for normalization)
-    H_peak = np.max(H)
+
     # Hospitalizations
     H_mean = np.mean(H)
     H_max = np.max(H)
@@ -502,14 +515,14 @@ if __name__ == "__main__":
     print(f"  Std : {I_std:.1f}")
     #endregion
 
-
+    # Variant dominance transition dates
     variant_changes = []
 
     # date in which the variant became dominant (exceded 50% proportion) https://epidata.sciensano.be/epistat/dashboard/#covid_variants
     variant_dates = {
         "Alpha": "2021-02-20",
-        "Delta": "2021-06-29", # previous date I had was "2021-06-15". This new one is from https://epidata.sciensano.be/epistat/dashboard/#covid_variants
-        "Omicron": "2021-12-31" # previous date I had was "2021-12-15" 
+        "Delta": "2021-06-29", 
+        "Omicron": "2021-12-31" 
     }
 
     for variant, date_str in variant_dates.items():
@@ -529,6 +542,7 @@ if __name__ == "__main__":
         key=lambda x: x["day"]
     )
 
+    # Run the model with default parameters
     results = run_model(
         H=H,
         I=I,

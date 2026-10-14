@@ -4,6 +4,10 @@ from dataclasses import dataclass
 
 @dataclass
 class Donor:
+    """
+    Individual recovered donor eligible for CCP collection.
+    Tracks donor characteristics and donation history throughout the simulation.
+    """
     donor_id: int
     infection_day: int
     donor_variant: str
@@ -19,12 +23,14 @@ def calculate_adoption(
     T_rollout,
     debug=False
 ):
-    # --------------------------
-    # ADOPTION FUNCTION
-    # Adoption(t) = A_max × ramp(t)
-    # --------------------------
+    """
+    Generate the prophylaxis adoption trajectory over time. Adoption(t) = A_max × ramp(t)
+    """
     adoption = np.zeros(n_days, dtype=float)
-
+    # Adoption follows a linear rollout:
+    # 0 before deployment,
+    # linearly increasing during rollout,
+    # and constant at A_max after.
     for i in range(n_days):
         if i < t_start:
             adoption[i] = 0
@@ -44,19 +50,26 @@ def calculate_populations(
     delay_inf_to_hosp,
     debug=False
 ):
-    # estimate high-risk infections from observed hospitalizations
+    """
+    Estimate high-risk and general-population infections.
+    """
+
+    # Approximate high-risk infections by shifting observed
+    # hospitalizations backward by the infection-to-hospitalization delay
     high_risk_population = np.roll(
         H,
         -delay_inf_to_hosp
-    ).astype(float)
+        ).astype(float)
 
-    # last days have no future hospitalization data
+    # The final days cannot be shifted because future
+    # hospitalization data are unavailable    
     high_risk_population[-delay_inf_to_hosp:] = 0
 
+    # Remaining infections are assigned to the general population
     general_population = np.maximum(
-    I - high_risk_population,
-    0
-    )
+        I - high_risk_population,
+        0
+        )
 
     if debug:
         debug_methods.debug_calculate_populations(H, I, delay_inf_to_hosp, high_risk_population, general_population)
@@ -66,59 +79,30 @@ def calculate_populations(
         general_population
     )
 
-def calculate_batch_activity(
-    infection_day,
-    donation_day,
-    initial_ccp_activity,
-    donation_window_start,
-    variant_changes
-):
 
-    activity = initial_ccp_activity
-
-    # Variant changes that occurred while antibodies
-    # were still in the donor
-    if variant_changes:
-
-        for event in variant_changes:
-
-            if (
-                infection_day
-                < event["day"]
-                <= donation_day
-            ):
-
-                activity *= (
-                    1 - event["penalty"]
-                )
-
-    return activity
-    
 def build_donation_schedule(
         infection_day, donations_per_donor, min_donation_interval, window_start, window_end, variant_changes
 ):
     """
-    Constructs schedule of donations for a donor after infection. (all donors on this day have the same schedule)
-    - First donation is at infection day + window start
-    - produce exactly this number of donations per donor
-    - attempts to spread donations evenly across the available sampling window, but when there is a variant transition it groups the donations before this
-    - maintains a minimum donation interval when estimating how many donations can fit before a variant change
+    Construct a donor's collection schedule within the eligible donation window.
 
+    Donations are spread across the donation window while attempting to
+    maximize collections before the next variant-dominance transition.
     """
 
-    # first eligible donation. Donation 1 is fixed at window start
+    # First eligible donation. Donation 1 is fixed at window start
     first_donation_day = (infection_day + window_start)
 
     if donations_per_donor == 1:
         return np.array([first_donation_day], dtype=int)
 
-    # after the first donation, we maximize the spacing between donations (constrained by the minimum spacing and the window_end and getting as many donations as possible before next variant)
-    last_donation_day = (infection_day + window_end) # hypothetical
+    # After the first donation, we maximize the spacing between donations (constrained by the minimum spacing and the window_end and getting as many donations as possible before next variant)
+    last_donation_day = (infection_day + window_end) # hypothetical latest possible donation within the eligibility window
 
-    # default schedule is evenly spread through window
+    # Default schedule is evenly spread through window
     donation_days = np.linspace(first_donation_day, last_donation_day, donations_per_donor).round().astype(int)
 
-    # look for the next variant dominance transition after 1st collection (we have a cross-neutralization table so it can be more than 1 variant of distance between infection and usage, that's ok)
+    # Look for the next variant dominance transition after 1st collection (we have a cross-neutralization table so it can be more than 1 variant of distance between infection and usage, that's ok)
     next_variant_day = None
     if variant_changes:
         for event in variant_changes:
@@ -126,13 +110,15 @@ def build_donation_schedule(
                 next_variant_day = event["day"] # found a variant transition after the donation
                 break
 
-    if next_variant_day is not None: # determine how many donations can happen before next variant
+    # If a variant transition is approaching, try to maximize the number of collections obtained beforehand
+    if next_variant_day is not None: 
         n_pre_variant = 1
-        
+
+        # determine how many donations can happen before next variant while respecting the minimum donation interval
         while ((first_donation_day + (n_pre_variant * min_donation_interval)) < next_variant_day) and (n_pre_variant < donations_per_donor):
             n_pre_variant += 1
 
-        # place the pre-variant donations as late as possible
+        # place the pre-variant donations as late as possible within the available pre-variant period
         if n_pre_variant > 1:
             pre_variant_end = min(
                 next_variant_day - 1,
@@ -147,7 +133,7 @@ def build_donation_schedule(
 
             donation_days[:n_pre_variant] = pre_variant_days
 
-        # spread remaining donations after variant
+        # Spread any remaining donations across the post-transition period
         n_remaining = (donations_per_donor - n_pre_variant)
 
         if n_remaining > 0:
@@ -155,6 +141,7 @@ def build_donation_schedule(
 
             donation_days[n_pre_variant:] = post_variant_days
 
+    # Ensure donation dates remain chronological
     donation_days = np.sort(donation_days)
 
     return donation_days
@@ -183,12 +170,13 @@ def calculate_daily_batches_agent(
 
     Returns:
         daily_batches
+            CCP batches collected each day.
         daily_potential_donations
+            Donations that would occur without capacity constraints.
         donor_statistics
+            Summary donor-participation metrics.
     """
-    # --------------------------------------------------
-    # CREATE DONORS AND INDEX THEM BY SCHEDULED DAY
-    # --------------------------------------------------
+    # Create donor agents and index them by scheduled donation day
 
     donors = []
     donors_scheduled_by_day = {
@@ -255,9 +243,7 @@ def calculate_daily_batches_agent(
 
             donor_id += 1
 
-    # --------------------------------------------------
-    # PREPARE DAILY OUTPUT
-    # --------------------------------------------------
+    # Initialize daily outputs
 
     daily_batches = {
         day: []
@@ -266,13 +252,10 @@ def calculate_daily_batches_agent(
 
     daily_potential_donations = []
 
-    # --------------------------------------------------
-    # RUN THE DONATION PROCESS DAY BY DAY
-    # --------------------------------------------------
-
+    # Simulate donations day by day
     for day in range(n_days):
 
-        # Direct lookup instead of scanning every donor.
+        # Direct lookup instead of scanning every donor
         scheduled_donors = donors_scheduled_by_day[day]
 
         # Donations that would happen today without capacity constraint
@@ -280,10 +263,7 @@ def calculate_daily_batches_agent(
             len(scheduled_donors)
         )
 
-        # --------------------------------------------------
-        # APPLY COLLECTION CAPACITY
-        # --------------------------------------------------
-
+        # Apply daily collection capacity constraints
         if len(scheduled_donors) > capacity_per_day:
 
             selected_donors = np.random.choice(
@@ -296,10 +276,7 @@ def calculate_daily_batches_agent(
 
             selected_donors = scheduled_donors
 
-        # --------------------------------------------------
-        # PROCESS ACTUAL DONATIONS
-        # --------------------------------------------------
-
+        # Process completed donations
         batches_today = {}
 
         for donor in selected_donors:
@@ -335,9 +312,7 @@ def calculate_daily_batches_agent(
             batches_today.values()
         )
 
-    # --------------------------------------------------
-    # DONOR STATISTICS
-    # --------------------------------------------------
+    # Calculate donor participation statistics
 
     # Unique people who ACTUALLY donated at least once
     participating_donors = sum(
@@ -381,13 +356,15 @@ def update_inventory(
     daily_batches,
     day
 ):
-    # Age batches and add new batches.
+    """
+    Age existing inventory and add newly collected CCP batches.
+    """
 
-    # age the inventory (all plasma batch ages 1 day) (even though right now it does not lose efficacy when ageing)
+    # Age the inventory (all plasma batch ages 1 day) (even though right now it does not lose efficacy when ageing)
     for batch in inventory:
         batch["age"] += 1
 
-    # today's production (prepare to save the age of each stock addition)
+    # Today's production (prepare to save the age of each stock addition)
     for batch in daily_batches[day]:
         inventory.append(
             {
@@ -401,14 +378,13 @@ def update_inventory(
             }
         )
 
-
     return inventory
 
 def get_variant(variant_changes, day):
     """
     Returns the dominant variant on a given day.
 
-    Assumes variant_changes is sorted chronologically:
+    Assumes variant_changes is sorted chronologically, e.g.:
     [
         {"day": 365, "name": "Alpha"},
         {"day": 500, "name": "Delta"},
@@ -433,9 +409,14 @@ def classify_inventory(
     minimum_usable_activity,
     max_storage_age
 ):
-    # Classifies the batches based on their activity if it would be deployed today - if it's enough, it goes to high-risk patients, if below threshold, goes to general population.
-    # If end treatment activity is below minimum usable, the batch gets deleted
+    """
+    Classifies the batches based on their activity if it would be deployed today (against the currently
+    dominant variant) - if it's enough, it goes to high-risk patients, 
+    if below threshold, goes to general population.
+    If end treatment activity is below minimum usable, the batch gets deleted
+    """
 
+    # Variant-specific cross-neutralization coefficients
     cross_neutralization = {
         "Wuhan": {
             "Wuhan": 1.00,
@@ -463,17 +444,19 @@ def classify_inventory(
     expired_today = 0
     surviving_inventory = []
     for batch in inventory:
-        # storage expiry
+        # Remove batches that exceed the maximum storage age
         if batch["age"] > max_storage_age:
             expired_today += batch["doses"]
             continue
 
         donor_variant = batch["donor_variant"]
 
+        # Project activity against the currently dominant variant
         deploy_activity = batch["activity"] * cross_neutralization[donor_variant][variant_today]
 
         batch["deploy_activity"] = deploy_activity
 
+        # Reserve high-activity CCP for high-risk patients
         if (
             batch["deploy_activity"]
             >= high_risk_use_threshold
@@ -481,6 +464,7 @@ def classify_inventory(
             batch["treatment_class"] = "high_risk"
             surviving_inventory.append(batch)
 
+        # Lower-activity CCP remains available for general-population use
         elif (
             batch["deploy_activity"]
             >= minimum_usable_activity
@@ -488,6 +472,7 @@ def classify_inventory(
             batch["treatment_class"] = "general"
             surviving_inventory.append(batch)
 
+        # Remove batches that fall below the minimum usable activity
         else:
             expired_today += (batch["doses"])
 
@@ -496,7 +481,9 @@ def classify_inventory(
 def summarize_inventory(
     inventory
 ):
-
+    """
+    Calculate the inventory available for high-risk and general-population use.
+    """
     high_risk_stock = sum(
         batch["doses"]
         for batch in inventory
@@ -521,22 +508,26 @@ def match_fifo_allocate_high_risk(
     available_stock,
     variant_today
 ):
+    """
+    Allocate CCP to high-risk patients using activity-prioritized matching.
+    """
     # Prioritize best-matched (highest deploy_activity) batches first, so
     # a patient draws the most cross-neutralization-matched stock before
     # older, worse-matched stock that merely still clears the threshold.
     # Age is only a tiebreaker among equally-matched batches, to keep
-    # FIFO-style waste control within a match tier.
+    # FIFO-style waste control
     candidates = sorted(
         (batch for batch in inventory if batch["treatment_class"] == "high_risk"),
         key=lambda b: (-b["deploy_activity"], -b["age"])
     )
 
-    # Capacity calculation
+    # Capacity (Maximum number of treatment courses available in inventory)
     max_new_patients = (
         available_stock
         / doses_per_treatment
     )
 
+    # Patients that can actually start treatment today
     requested_starts = min(
         requested_patients,
         max_new_patients
@@ -548,10 +539,12 @@ def match_fifo_allocate_high_risk(
     )
 
     remaining = doses_needed
+    # Running total used to calculate average treatment activity
     effective_treatments = 0
+    # Store characteristics of allocated CCP units
     doses_age = []
 
-    # Allocation
+    # Allocate inventory to treatment courses
     for batch in candidates:
         if remaining <= 0:
             break
@@ -579,6 +572,7 @@ def match_fifo_allocate_high_risk(
         / doses_per_treatment
     )
 
+    # Mean projected activity of CCP delivered today
     if allocated_doses > 0:
         mean_treatment_activity = (
             effective_treatments
@@ -607,7 +601,11 @@ def match_fifo_allocate_general(
     release_threshold,
     release_fraction
 ):
-    # Batches that are already set aside for general
+    """
+    Allocate CCP to the general population using eligible inventory and,
+    when permitted, a released fraction of high-risk stock.
+    """
+    # Batches that are already set aside for general-population use
     general_candidates = [batch for batch in inventory
                 if batch["treatment_class"] == "general"]
     # High-risk doses that we can release from the inventory if the high-risk request rate is below the release threshold
@@ -624,25 +622,30 @@ def match_fifo_allocate_general(
 
         released_high_risk_stock = (release_fraction * high_risk_stock)
 
-    # Still try to offer the oldest first, so sort by age
+    # Prioritize batches with the highest projected activity.
+    # Age is used as a tiebreaker among equally effective batches.    
     candidates = sorted(
         general_candidates+high_risk_candidates,
         key=lambda b: (-b["deploy_activity"], -b["age"])
         )
 
-    # Capacity calculation
+    # Capacity calculation (Maximum number of treatment courses available to the
+    # general population today)
     available_to_general = (general_stock + released_high_risk_stock)
     max_new_patients = (available_to_general / doses_per_treatment)
     requested_starts = min(general_requested_patients,max_new_patients)
     doses_needed = (requested_starts * doses_per_treatment)
     remaining = doses_needed
+
+    # Running total used to calculate average treatment activity
     effective_treatments = 0
+    # Store characteristics of allocated CCP units
     doses_age = []
 
     # Budget of released high-risk stock
     remaining_release = released_high_risk_stock
 
-    # Allocation
+    # Allocate inventory to treatment courses
     for batch in candidates:
 
         if remaining <= 0:
@@ -669,10 +672,6 @@ def match_fifo_allocate_general(
         batch["doses"] -= take
         remaining -= take
 
-        # # Reclassify consumed high-risk stock
-        # if (batch["treatment_class"] == "high_risk"):
-        #     batch["treatment_class"] = "general"
-
         doses_age.append({"doses":take, "age":batch["age"], "deploy_activity":batch["deploy_activity"], "donor_variant":batch["donor_variant"], "patient_variant":variant_today})
     
     allocated_doses = (
@@ -684,6 +683,7 @@ def match_fifo_allocate_general(
         / doses_per_treatment
     )
 
+    # Mean projected activity of CCP delivered today
     if allocated_doses > 0:
 
         mean_treatment_activity = (
@@ -703,87 +703,12 @@ def match_fifo_allocate_general(
         mean_treatment_activity,
         doses_age)
 
-def fifo_allocate_patients(
-    inventory,
-    requested_patients,
-    doses_per_treatment,
-    available_stock,
-    treatment_class,
-    variant_today
-):
-
-    max_new_patients = (
-        available_stock
-        / doses_per_treatment
-    )
-
-    requested_starts = min(
-        requested_patients,
-        max_new_patients
-    )
-
-    doses_needed = (
-        requested_starts
-        * doses_per_treatment
-    )
-
-    remaining = doses_needed
-    effective_treatments = 0
-    doses_age = []
-    for batch in inventory:
-
-        if remaining <= 0:
-            break
-
-        if batch["treatment_class"] != treatment_class:
-            continue
-
-        take = min(
-            batch["doses"],
-            remaining
-        )
-
-        effective_treatments += (
-            take
-            * batch["deploy_activity"]
-        )
-
-        batch["doses"] -= take
-        remaining -= take
-
-        doses_age.append({"doses":take, "age":batch["age"], "donor_variant":batch["donor_variant"], "patient_variant":variant_today})
-    
-    actual_doses_reserved = (
-        doses_needed - remaining
-    )
-
-    new_patients = (
-        actual_doses_reserved
-        / doses_per_treatment
-    )
-
-    if actual_doses_reserved > 0:
-
-        mean_treatment_activity = (
-            effective_treatments
-            / actual_doses_reserved
-        )
-
-    else:
-
-        mean_treatment_activity = 0
-
-    return (
-        inventory,
-        new_patients,
-        max_new_patients,
-        actual_doses_reserved,
-        mean_treatment_activity,
-        doses_age)
-
 def remove_empty_batches(
     inventory
 ):
+    """
+    Remove depleted inventory batches.
+    """
     return [
         batch
         for batch in inventory
@@ -791,12 +716,16 @@ def remove_empty_batches(
     ]
 
 def calculate_stock_metrics(inventory):
-    # stock after reservation
+    """
+    Calculate total inventory and mean CCP activity.
+    """
+    # Total CCP doses currently available in inventory
     stock = sum(
         batch["doses"]
         for batch in inventory
     )
 
+    # Dose-weighted average activity of stored CCP
     mean_activity = (
         sum(
             batch["doses"] * batch["activity"]
@@ -813,7 +742,11 @@ def calculate_hospitalization_reduction(
     eligible_patients,
     treatment_activity
 ):
+    """
+    Calculate treatment coverage and activity-adjusted hospitalization reduction.
+    """
 
+    # Fraction of eligible patients who received prophylaxis
     if eligible_patients > 0:
         treated_fraction = (
             treated_patients
@@ -822,6 +755,7 @@ def calculate_hospitalization_reduction(
     else:
         treated_fraction = 0
 
+    # Effective coverage combines treatment coverage and CCP activity
     hospitalization_reduction = (
         treated_fraction
         * treatment_activity
@@ -837,6 +771,9 @@ def calculate_supply_coverage(
     treated_patients,
     requested_patients
 ):
+    """
+    Calculate the fraction of treatment demand that was fulfilled.
+    """
     # how much of the treatment demand could be fulfilled (inventory performance, not hospitalization impact)
     if requested_patients > 0:
 
@@ -848,7 +785,9 @@ def calculate_supply_coverage(
     return 1.0
 
 def variant_accounting(inventory):
-
+    """
+    Track inventory by donor variant and treatment eligibility class.
+    """
     counts = {
         "wuhan_high_risk": 0,
         "wuhan_general": 0,
@@ -866,6 +805,7 @@ def variant_accounting(inventory):
         treatment_class = batch["treatment_class"]
         doses = batch["doses"]
 
+        # Match the batch to its variant-specific inventory category
         key = f"{variant.lower()}_{treatment_class}"
 
         if key in counts:
