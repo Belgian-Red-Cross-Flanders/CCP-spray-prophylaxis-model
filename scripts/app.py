@@ -1514,7 +1514,7 @@ with tab_model:
     # Point color = donor variant
     # background color = dominant circulating (patient) variant
     age_activity = st.radio(
-    "Age or activity",
+    "Display age or activity of the delivered plasma",
     [
         "Age",
         "Activity"
